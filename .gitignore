@@ -1,0 +1,23 @@
+# Environment files — never commit keys or RPC URLs
+.env
+*.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor workspace environment
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.aider*
+AGENTS.md
+
+# Key material — belt and suspenders
+*.pem
+*.key
+keystore/
