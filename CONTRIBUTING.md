@@ -55,6 +55,12 @@ pnpm dev
 
 No other repository is required. Contract ABIs are vendored in `src/lib/abis.ts`, copied from [den-protocol](https://github.com/HiddenMask18/den-protocol). If the protocol contracts change, that file is updated here as part of the same PR that requires the change.
 
+The three documents to read before writing any code:
+
+- [PROTOCOL.md](./PROTOCOL.md) — cryptographic and API contract. What the client must compute and call.
+- [DESIGN.md](./DESIGN.md) — product and UX spec. What the user experience must be.
+- [spec/furden-architecture.md](./spec/furden-architecture.md) — technical architecture. How the code is structured: env vars, state stores, routing, design tokens, the crypto pipeline.
+
 ### Feature requests
 
 The scope for v1 is documented in [DESIGN.md — Scope](./DESIGN.md#scope). The exclusions are deliberate and have documented reasons. Opening issues for things in the out-of-scope table is not useful at this stage — those decisions aren't arbitrary and re-litigating them before anything is built adds noise without value.
