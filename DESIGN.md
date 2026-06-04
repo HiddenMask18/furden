@@ -530,17 +530,16 @@ These are not marketing copy. They are the audit trail that makes the protocol's
 
 ---
 
-## Decisions Still Open
+## Design Decisions
 
-These require a decision before implementation reaches the flows that depend on them. The software stack is settled — see [Platform Strategy — Settled stack](#codebase-assumption) above.
+All UX decisions are resolved. Decisions recorded here for reference; rationale is in `furden-architecture.md` Appendix A.
 
-### UX decisions (blocking for specific flows)
-
-| Decision | Notes |
+| Decision | Resolution |
 |---|---|
-| Rich text vs plain text for posts | Markdown rendering adds a parsing dependency and requires HTML sanitization. Plain text is safe to ship. Markdown is v1.x unless there is a strong case for it in v1. |
-| Discover page content strategy | The instance has no discovery API — no listing endpoint, no trending query, no curated feed. `/` cannot be backed by a server-side discovery query. Options: static landing page explaining DEN with a curated/community creator list; on-chain event scan for creators; defer `/explore`. The protocol architecture (den-architecture.md §6) explicitly frames DEN as a destination after discovery happens elsewhere. Simplest correct answer for v1: `/` is a static landing. Decide before building the route. |
-| Image-only or image + file attachment | Art packs are typically ZIP files. Downloading, decrypting, and offering a ZIP for download in-browser is different from displaying an image. Decide before the posting flow is implemented — it affects the upload pipeline and the content card design. |
-| Content card aspect ratio | Fixed ratio (cropped, click for full) vs natural ratio (everything inline). Fixed ratio is safer for feeds with mixed portrait/landscape art. Natural ratio is more respectful of the artist's composition. |
-| Subscription renewal UX | When a subscription is close to expiring, how does the subscriber find out? There is no push mechanism, so detection is pull-based — on page load, on feed load, or when a key request fails. |
-| Error copy voice | The manifesto has a strong, direct voice. Does the UI adopt it or use more neutral, conventional UX copy? Decide before writing any error messages or empty states — inconsistent voice across the app is worse than either choice. |
+| Rich text vs plain text | **Plain text for v1.** Markdown adds a parser and HTML sanitisation. v1.x addition. |
+| Discover page / `/` | **Static landing page.** Instance has no discovery API. `/explore` deferred. DEN is a destination, not a discovery platform. |
+| Image vs file attachments | **Images only for v1.** ZIPs require a second card variant and separate pipeline handling. Art pack support is v1.x. |
+| Content card aspect ratio | **Clamped natural ratio.** Render at true aspect ratio, clamped min 2:3 (portrait) to max 4:3 (landscape). `object-fit: contain` at boundaries — letterbox, no crop. |
+| Subscription renewal detection | **All three combined:** on page load, on feed load, and on key request failure. Complementary signals, not alternatives. |
+| Error copy voice | **Manifesto voice throughout.** Direct, first-person, no corporate hedging. Consistency across the app is the priority. |
+| Accent colour | **`#8b5cf6` (violet) provisional.** Token in place. Value confirmed or updated at visual review before v1 ship. |

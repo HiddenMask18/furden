@@ -767,21 +767,50 @@ Contract addresses are constants per chain in `src/lib/chain.ts` rather than fet
 
 Pre-built connection modals were rejected. Both impose visual constraints incompatible with furden's design direction and bundle styling that conflicts with the CSS Modules approach. The wallet connection UI is built on wagmi primitives with a Radix Dialog. The additional implementation effort is bounded and the visual control is complete.
 
+**Plain text over rich text for posts**
+
+Plain text was chosen for v1. Markdown adds a parser dependency and requires HTML sanitisation to prevent XSS when rendering. The safety and simplicity case outweighs the formatting benefit at launch. Markdown rendering is a v1.x addition once the core posting pipeline is validated.
+
+**Static landing page for `/` — no instance-backed discovery**
+
+The instance has no discovery API — no endpoint for listing creators, no trending query, no curated feed. `/` cannot be backed by server-side discovery queries. `/` is a static landing page for v1 explaining what DEN is, with a community-maintained or curated creator list. `/explore` is deferred. This is consistent with den-architecture.md §6: DEN is a destination after discovery happens elsewhere, not a discovery platform.
+
+**Images only — no file attachments (v1)**
+
+The protocol is format-agnostic at the storage layer; `POST /creator/content` takes raw ciphertext bytes with no content-type metadata. The UI decision was whether to support ZIP art packs as a distinct content type. Images only for v1. ZIPs require a second complete card variant for the feed (download button vs. inline display) and separate handling in the upload pipeline. That scope cost is not justified when images cover the primary community use case. Art pack support is v1.x.
+
+**Clamped natural aspect ratio for content cards**
+
+Content cards render at the image's natural aspect ratio, clamped to a min/max range to prevent excessively tall or wide images from dominating the feed:
+
+- Minimum: **2:3** (portrait cap)
+- Maximum: **4:3** (landscape cap)
+- At clamp boundaries: `object-fit: contain` — letterbox rather than crop, preserving the artist's composition
+
+Within the range the image renders at its true ratio with no cropping. Clamping is a layout concern, not an artistic one: the choice of contain over cover at the boundary is what makes clamping respectful of the work.
+
+**All three subscription renewal detection strategies combined**
+
+Subscription expiry detection is pull-based. All three available signals are used together:
+1. On page load — check subscription state for active subscriptions
+2. On feed load — re-verify before rendering the feed
+3. On key request failure — a failed `POST /access/key` surfaces a renewal CTA immediately
+
+These signals are complementary, not alternatives.
+
+**Manifesto voice for all UI copy**
+
+Error messages, empty states, and system copy use the manifesto voice: direct, first-person, without corporate hedging. Consistency across the app is the priority; the manifesto voice is the correct choice for a project with a strong community identity document. "Your content is encrypted here, in your browser" is the register; all copy matches it.
+
+**Accent colour — provisional until visual review**
+
+`#8b5cf6` (violet) is confirmed as the working value in `--color-accent`. It is not blocked: the token structure is correct and all components use the token. The value is reviewed and confirmed or updated before v1 ship. No component code changes when the value changes — it is a single line in `tokens.css`.
+
 ---
 
 ## Appendix B — Open Questions
 
-These decisions have not been made. They must be resolved before the flows that depend on them are implemented. They are not blocking the scaffold or any flows other than those specified.
-
-| Question | Blocks | Notes |
-|---|---|---|
-| Accent colour final value | v1 visual review | Current token value is `#8b5cf6` (violet), provisional. Requires community input or designer decision. The token is in place; the value can change without touching component code. |
-| Rich text vs plain text for posts | Post composer implementation | Markdown adds a parsing dependency and HTML sanitisation requirement. Plain text is safe to ship. Recommendation: plain text for v1. |
-| Discover page content strategy | `/` route implementation | The instance has no discovery endpoint — no listing of creators, no trending query, no curated feed. The options are: (a) static landing page explaining DEN with a community-maintained or curated list of creators, (b) on-chain event scan (`TierSet` events from `DENSubscription`) to surface creators, or (c) defer `/explore` entirely. DEN is a destination not a discovery platform (den-architecture.md §6). The simplest correct answer for v1 is a static landing page. Decide before building the `/` and `/explore` routes. |
-| Image-only vs image + file attachments | Upload pipeline, content card design | Art packs as ZIP files require different content card treatment (download button vs. inline display) and affect the upload pipeline's file type handling. Decide before implementing the post composer. |
-| Content card aspect ratio | Feed layout implementation | Fixed ratio (crop, click for full) vs natural ratio (everything inline). Fixed is safer for mixed portrait/landscape feeds. Natural is more respectful of the artist's composition. |
-| Subscription renewal detection strategy | Subscription status display | Pull-based only (no push mechanism). Options: check on every feed load, check on page load, detect from key request failure. All three can be combined. |
-| Error copy voice | Every error state and empty state | The manifesto has a direct, first-person voice. Does the UI copy match it, or use conventional neutral UX copy? Decide before writing the first error message — inconsistency across the app is worse than either choice. |
+No open questions. All decisions recorded in Appendix A.
 
 ---
 
