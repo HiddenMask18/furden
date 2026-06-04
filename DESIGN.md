@@ -1,6 +1,6 @@
 # furden — Design Specification v0.1
 
-> **Status: brainstorm and early planning.** This document captures thinking-in-progress. Sections marked as resolved reflect decisions that have been reasoned through and are unlikely to change. Sections that reference the stack (framework, routing, styling, component library) are explicitly provisional — those decisions are still being made. Do not treat anything here as final until the status notice is removed.
+> **Status: design and pre-implementation.** Core flows, information architecture, and the software stack are settled. UX decisions blocking specific flows are called out inline. Implementation has not started.
 
 This document is the product and UX design spec for the furden reference client. It resolves platform assumptions, scope, information architecture, core flows, and design constraints before component work begins. Ambiguous product decisions resolved here do not need to be re-litigated in code.
 
@@ -12,18 +12,30 @@ This document is a companion to [PROTOCOL.md](./PROTOCOL.md), which defines the 
 
 ### Codebase assumption
 
-> **Under discussion.** The framework, router, styling approach, and component library are not yet decided. See [README.md — Stack](./README.md#stack) for the full evaluation of candidates and open questions. The constraints below apply regardless of which framework is chosen.
-
 A single SPA with no server-side rendering. One codebase that runs entirely in the browser. SSR build tools (Next.js, Remix, SvelteKit in SSR mode) are ruled out by two hard constraints: the in-memory session model requires a pure client-side runtime, and the Tauri desktop wrapper path requires a static SPA output.
 
-The Tauri desktop wrapper is a natural v1.x path — the web app is designed to make that transition low-effort regardless of which framework is chosen. This means: no SSR, no Node-specific APIs in the crypto layer, Web Crypto API throughout as required by the protocol. Nothing in the UI architecture should require re-writing for Tauri.
+The Tauri desktop wrapper is a natural v1.x path — the web app is designed to make that transition low-effort. This means: no SSR, no Node-specific APIs in the crypto layer, Web Crypto API throughout as required by the protocol. Nothing in the UI architecture should require re-writing for Tauri.
 
-**Settled technical constraints that apply to any framework choice:**
-- Vite as the build tool (SPA requirement, Tauri compatibility)
-- viem for chain interaction (TypeScript-first, protocol ABIs)
-- `@noble/curves` + `@noble/hashes` + Web Crypto API for cryptography (protocol-mandated, non-substitutable)
-- TypeScript strict mode throughout
+**Settled stack:**
+
+| Concern | Choice | Reason |
+|---|---|---|
+| UI framework | React 19 | wagmi is React-first; deepest integration, largest web3 contributor pool, React 19 compiler reduces re-render cost on crypto-heavy state |
+| Router | TanStack Router | Type-safe route params end-to-end — proxy addresses and fingerprints in URLs are security-meaningful, not plain strings |
+| Server state | TanStack Query | Same ecosystem as TanStack Router; dependent query chains (subscribe → auth → key request) handled cleanly; cache invalidation matches the protocol's live-verification model |
+| Client state | Zustand | In-memory session store and upload pipeline state (in-memory ciphertext between phases) are exactly the imperative, slice-based state Zustand handles well |
+| Wallet | wagmi + viem | wagmi hooks (useAccount, useConnect, useTransaction) are the binding layer; custom connection UI on top — no pre-built modal kits |
+| Styling | CSS Modules + CSS custom properties | Zero runtime, no PostCSS dependency, pairs natively with Radix UI data-state attributes; the content-forward design direction requires per-component control |
+| Component primitives | Radix UI | Headless accessible primitives (Dialog, DropdownMenu, Progress, Tabs, Checkbox, Tooltip) — no visual style imposed, full control retained |
+| Package manager | pnpm | Strict dependency hoisting, first-class workspace support for the monorepo structure |
+| Build tool | Vite | SPA requirement, Tauri compatibility, fast HMR |
+| Cryptography | `@noble/curves` + `@noble/hashes` + Web Crypto API | Protocol-mandated, non-substitutable |
+| Language | TypeScript strict mode | Protocol wire formats, ABI types, and hex addresses are type-sensitive |
+
+**Runtime constraints (non-negotiable regardless of any future stack change):**
 - No localStorage for session tokens or key material (in-memory only)
+- All crypto client-side — master secret never leaves the browser in plaintext
+- No SSR, no Node-specific APIs in the crypto layer
 
 ### Viewport strategy
 
@@ -520,20 +532,7 @@ These are not marketing copy. They are the audit trail that makes the protocol's
 
 ## Decisions Still Open
 
-These require a decision before implementation reaches them. Stack decisions are flagged separately since they gate everything else.
-
-### Stack decisions (blocking — must be decided before any code is written)
-
-| Decision | Leading candidate | What to evaluate |
-|---|---|---|
-| UI framework | React 19 | Vue 3 has an official wagmi adapter and arguably better DX. Svelte 5 has the best DX but is 6 months old and the web3 ecosystem is mid-transition. React has the largest contributor pool and most mature wagmi integration. |
-| Router | TanStack Router | Type-safe route params matter here — proxy addresses and fingerprints appear in URLs and are security-meaningful. TanStack Router types them end-to-end. React Router treats them as plain `string`. |
-| Styling | CSS Modules + CSS custom properties | Tailwind is more contributor-accessible. CSS Modules produce cleaner component code and work without PostCSS. Tailwind is the better choice if shadcn/ui is also adopted; CSS Modules is the better choice if Radix primitives are used directly. |
-| Accessible component primitives | Radix UI | Ark UI is a newer competitor from the Chakra team. Radix is more established. Either gives you accessible dialogs, dropdowns, and focus management without a bundled visual style — which furden needs since it has its own design direction. shadcn/ui is off the table without Tailwind. |
-| Wallet connection UI | Custom on wagmi primitives | RainbowKit and Web3Modal provide pre-built connection modals. Both impose visual constraints furden doesn't want. Building directly on `useConnect`/`useAccount`/`useDisconnect` is more work but gives full control over the wallet badge and connection flow design. |
-| Package manager | pnpm | Bun is faster and matches the instance. pnpm has stricter dependency isolation and broader CI support. Either is fine; decide once and document it. |
-| Repo structure | Separate repo | A monorepo workspace (pnpm workspaces or Turborepo) would allow importing ABIs and types directly from `den-protocol`. A separate repo is simpler contributor onboarding. The ABI copying problem is manageable at current scale. |
-| Web Worker for encryption | Defer to v1.x | Large file encryption on the main thread will block the UI. Moving the encryption pipeline to a Web Worker keeps the interface responsive. Not required for the initial prototype but the crypto layer should be structured to make extraction straightforward when the time comes. |
+These require a decision before implementation reaches the flows that depend on them. The software stack is settled — see [Platform Strategy — Settled stack](#codebase-assumption) above.
 
 ### UX decisions (blocking for specific flows)
 

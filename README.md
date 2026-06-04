@@ -1,6 +1,6 @@
 # furden
 
-> **Status: early design and planning.** There is no working code yet. The design spec, platform strategy, and software stack are all under active discussion. See [DESIGN.md](./DESIGN.md) for what has been worked out and what is still open. See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to participate at this stage.
+> **Status: pre-implementation.** The design spec, platform strategy, and software stack are settled. No code exists yet. See [DESIGN.md](./DESIGN.md) for the full product and UX spec. See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to participate at this stage.
 
 The reference client for the [DEN protocol](https://github.com/HiddenMask18/den-protocol) — a web application for both creators and subscribers. Handles wallet connection, client-side encryption, on-chain transactions, and content decryption locally in the browser.
 
@@ -29,37 +29,33 @@ A [Tauri](https://tauri.app) desktop wrapper is a natural next step for users wh
 
 ## Stack
 
-The software stack is **under active discussion** and not yet decided. The decisions below are either settled by hard technical constraints or are leading candidates, not final choices.
+The stack is settled. All decisions below are final for v1. If you have a strong position on any of these, open an issue — but expect to make a case against the specific reasons documented in [DESIGN.md — Settled stack](./DESIGN.md#codebase-assumption).
 
-### Settled
+### Protocol-mandated (non-substitutable)
 
-These are not negotiable — they are determined by the protocol's wire format requirements.
+These are determined by the protocol's wire format. Changing them produces incompatible ciphertext or breaks the instance API contract.
 
 | Concern | Choice | Reason |
 |---|---|---|
-| Cryptography | `@noble/curves` (secp256k1) + `@noble/hashes` (HKDF-SHA256) + Web Crypto API (AES-256-GCM) | Must match the instance exactly. Substituting any of these produces incompatible ciphertext. |
+| Cryptography | `@noble/curves` (secp256k1) + `@noble/hashes` (HKDF-SHA256) + Web Crypto API (AES-256-GCM) | Must match the instance exactly. Any substitution produces ciphertext the instance cannot read. |
 | Chain | Base (mainnet) / Base Sepolia (testnet) | Canonical identity chain per the protocol spec. |
-| Chain interaction | [viem](https://viem.sh) | TypeScript-first, tree-shakable, best-in-class type inference for contract ABIs. |
-| Build tool | [Vite](https://vitejs.dev) | SPA requirement, Tauri compatibility, fast HMR. SSR build tools (Next.js, Remix) are ruled out. |
-| Language | TypeScript, strict mode | Protocol wire formats, ABI types, and hex addresses are all type-sensitive. |
+| Chain interaction | [viem](https://viem.sh) | TypeScript-first, tree-shakable, contract ABI type inference. |
+| Build tool | [Vite](https://vitejs.dev) | SPA requirement, Tauri compatibility, fast HMR. SSR build tools are ruled out. |
+| Language | TypeScript, strict mode | Protocol wire formats, ABI types, and hex addresses are type-sensitive. |
 
-### Under discussion
+### Application stack
 
-These are the open decisions. See [DESIGN.md — Decisions Still Open](./DESIGN.md#decisions-still-open) for the full evaluation.
-
-| Concern | Leading candidate | Alternatives considered |
+| Concern | Choice | Reason |
 |---|---|---|
-| UI framework | React 19 | Vue 3, Svelte 5 |
-| Wallet connection | wagmi + viem | web3-onboard, @wagmi/core directly |
-| Router | TanStack Router | React Router v7 |
-| Server state | TanStack Query | SWR |
-| Client state | Zustand | Jotai |
-| Styling | CSS Modules + CSS custom properties | Tailwind CSS |
-| Accessible component primitives | Radix UI | Ark UI |
-| Package manager | pnpm | Bun |
-| Desktop wrapper (v1.x) | Tauri | Electron |
-
-Nothing in this table is final. If you have a strong position on any of these — especially if you've built something similar — open an issue.
+| UI framework | React 19 | wagmi is React-first; deepest wallet integration, largest web3 contributor pool, React 19 compiler reduces re-render cost on crypto-heavy state. |
+| Wallet connection | wagmi + viem, custom UI | Pre-built connection modals (RainbowKit, Web3Modal) impose visual constraints furden doesn't want. Built on `useConnect` / `useAccount` / `useDisconnect` directly. |
+| Router | TanStack Router | Type-safe route params end-to-end — proxy addresses and fingerprints in URLs are security-meaningful identifiers, not plain strings. |
+| Server state | TanStack Query | Same ecosystem as TanStack Router; handles dependent query chains (subscribe → auth → key request) and cache invalidation correctly for the protocol's live-verification model. |
+| Client state | Zustand | In-memory session store, upload pipeline state (in-memory ciphertext between phases), and derived crypto state are imperative, slice-based — exactly what Zustand handles well. |
+| Styling | CSS Modules + CSS custom properties | Zero runtime, no PostCSS dependency, pairs natively with Radix UI data-state attributes. Content-forward design direction requires per-component control that utility classes fight against. |
+| Component primitives | Radix UI | Headless accessible primitives (Dialog, DropdownMenu, Progress, Tabs, Checkbox, Tooltip). No visual style imposed. |
+| Package manager | pnpm | Strict dependency isolation, first-class workspace support. |
+| Desktop wrapper (v1.x) | Tauri | No app store dependency, lightweight, uses the existing SPA output as-is. |
 
 ## Setup
 

@@ -10,9 +10,9 @@ The DEN protocol itself is essentially complete. The furden client is where work
 
 - [PROTOCOL.md](./PROTOCOL.md) — the cryptographic and API contract between furden and a DEN instance. This is finished and binding. It defines exactly what furden must implement.
 - [DESIGN.md](./DESIGN.md) — the product and UX design spec. This captures a significant amount of thinking about flows, information architecture, and design constraints. It is a working document, not a final spec. Some sections are reasoned through; others are explicitly provisional.
-- The software stack — framework, router, styling, component library — is under active discussion and not yet decided. The README tracks the current state of that conversation.
+- The software stack is decided. React 19, TanStack Router, TanStack Query, Zustand, wagmi, CSS Modules, Radix UI, pnpm, Vite. See [README.md — Stack](./README.md#stack) for the full list and rationale.
 
-The next concrete step is resolving the stack decisions and writing the first real code. Until that happens, the most valuable contributions are to the thinking, not the implementation.
+The next concrete step is the application scaffold. Until that is in place, the most valuable contributions are to the design thinking, not the implementation.
 
 ---
 
@@ -23,12 +23,6 @@ The next concrete step is resolving the stack decisions and writing the first re
 [DESIGN.md](./DESIGN.md) documents the intended UX for the creator onboarding wizard, the posting flow, the subscription flow, session management, and more. If you're a creator who has used Fansly or SubscribeStar, a subscriber who has navigated similar platforms, or a developer who has built something in this space — your read of that document is genuinely useful.
 
 Open an issue if something in the spec seems wrong, incomplete, or missing. Cite the specific section. Explain what the concern is and why. Vague "I don't like this" is not useful; "This step in the onboarding wizard assumes the user has already set up a wallet, but the target audience is migrating from Fansly and many won't have one — here's what I think should happen instead" is.
-
-### Weighing in on the stack decisions
-
-The open stack decisions are documented in [DESIGN.md — Decisions Still Open](./DESIGN.md#decisions-still-open) and summarized in [README.md — Stack](./README.md#stack). If you have direct experience with any of the candidates — you've built something with TanStack Router, or you've integrated wagmi with Vue 3, or you've shipped a Tauri app — that experience is valuable input.
-
-Open an issue with your perspective. Be specific about what you actually encountered, not what the documentation claims.
 
 ### Protocol knowledge
 
@@ -44,9 +38,22 @@ If you've read [PROTOCOL.md](./PROTOCOL.md) and you think something in the clien
 
 ### Code contributions
 
-There is no codebase to contribute to yet. The stack is not decided. Any code written now would be written against assumptions that may change. Wait until the foundational decisions are made and the first scaffold is in place.
+The stack is decided but the scaffold is not yet in place. Any code written now would have nowhere to land. Wait until the first scaffold is committed — it will establish the directory structure, tsconfig, Vite config, and routing conventions that all subsequent code must conform to.
 
-When code contributions open up, this document will say so explicitly.
+When code contributions open up, this document will say so explicitly and explain what the setup process looks like.
+
+### Development setup (once the scaffold lands)
+
+furden is a self-contained repository. Clone it and install:
+
+```
+git clone https://github.com/HiddenMask18/furden
+cd furden
+pnpm install
+pnpm dev
+```
+
+No other repository is required. Contract ABIs are vendored in `src/lib/abis.ts`, copied from [den-protocol](https://github.com/HiddenMask18/den-protocol). If the protocol contracts change, that file is updated here as part of the same PR that requires the change.
 
 ### Feature requests
 
