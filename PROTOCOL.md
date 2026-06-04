@@ -140,9 +140,11 @@ Body: { wallet: "0x...", nonce: "...", signature: "0x..." }
 → { sessionToken: "...", proxy: "0x..." }
 ```
 
-Store `sessionToken` in memory (Zustand), never in localStorage. The `proxy` is the creator's stable DEN identity — it does not change on wallet rotation. Use it as the key for all subsequent operations.
+Store `sessionToken` in memory (Zustand), never in localStorage. The `proxy` is the participant's stable DEN identity — it does not change on wallet rotation. Use it as the key for all subsequent operations.
 
 All protected routes: `Authorization: Bearer <sessionToken>`
+
+**Registration required for all participants.** The instance rejects authentication from any wallet that has not called `DENIdentityRegistry.register()`. This applies to both creators and subscribers — every participant must hold a registered DEN identity proxy before they can authenticate with any instance. The `proxy` returned by `POST /auth/verify` is always a valid, registered proxy address. An unregistered wallet receives `401 { reason: "wallet is not registered in DEN" }`.
 
 ---
 
@@ -183,7 +185,7 @@ const operationalBlob  = await encryptBlob(masterSecret, instancePubKey);
 // Derive wallet pubKey from wallet private key via secp256k1.getPublicKey()
 const portabilityBlob  = await encryptBlob(masterSecret, walletPubKey);
 
-// Emergency portability blob — if an emergency wallet is registered
+// Emergency portability blob — only when an emergency wallet is registered
 const emergencyPortabilityBlob = await encryptBlob(masterSecret, emergencyWalletPubKey);
 ```
 
@@ -193,9 +195,25 @@ PUT /creator/blob
 Body: {
   operationalBlob:          "0x<hex>",
   portabilityBlob:          "0x<hex>",
-  emergencyPortabilityBlob: "0x<hex>"   // optional
+  emergencyPortabilityBlob: "0x<hex>"   // optional — only include if an emergency wallet is registered
 }
 → { stored: true }
+```
+
+The instance decrypts the operational blob to verify the correct pubkey was used, then immediately zeros the plaintext. The portability blob and emergency portability blob are stored as-is — the instance cannot decrypt them.
+
+To check upload status (e.g. after a migration import to verify the operational blob is ready):
+```
+GET /creator/blob
+→ { exists: boolean }
+```
+
+`exists` is `false` after `POST /creator/import` until the creator re-uploads the operational blob re-encrypted to the new instance's key.
+
+To retrieve the portability blob for recovery or backup (the instance returns the blob encrypted to the authenticated wallet's key — primary wallet gets the portability blob, an emergency wallet gets the emergency portability blob):
+```
+GET /creator/portability-blob
+→ <raw bytes, Content-Type: application/octet-stream>
 ```
 
 **7. Set instance URL on-chain [chain]** *(if not already set)*
@@ -265,6 +283,39 @@ Body: { tierId: "1", paths: ["tier:1"], signature: "0x...", version: 1 }
 DENAccessGrant.publishGrant(tierId, paths, signature)
 ```
 
+To retrieve a stored grant (e.g. to read the current version before publishing an update):
+```
+GET /creator/grant/:tierId
+→ { tierId: "1", paths: ["tier:1"], version: 1 }
+```
+
+---
+
+## Creator profile management
+
+**Set bio [instance]**
+
+The creator's bio is stored on the instance and returned in `GET /profile/:proxy`. The handle lives on-chain via `DENIdentityRegistry.handleOf(proxy)` — it is not set here.
+
+```
+PUT /creator/profile
+Body: { bio: "..." }   // pass null to clear
+→ { stored: true }
+```
+
+**Mark content public or private [instance + client]**
+
+Public content is served without a subscription — the content key is included in `GET /profile/:proxy` so any client can decrypt it. When marking content public, the creator derives the content key from their master secret and supplies it.
+
+```
+PUT /creator/content/:fingerprint/visibility
+Body: { isPublic: true,  contentKey: "0x<64 hex chars>" }
+   or { isPublic: false }
+→ { stored: true }
+```
+
+`contentKey` is `deriveKey(masterSecret, "tier:" + tierId)` — the same 32-byte AES-256-GCM key derived from the master secret for that tier. Making content public is the creator choosing to share that derivation output openly. Passing `isPublic: false` clears the stored key and removes public access.
+
 ---
 
 ## Public profile
@@ -281,7 +332,7 @@ GET /profile/:proxy
   }
 ```
 
-`contentKey` in `publicContent` entries is the 32-byte AES key. To display public content:
+`contentKey` in `publicContent` entries is the 32-byte AES key (0x-prefixed hex). To display public content:
 1. `GET /content/:fingerprint` (no auth needed for public-designated content)
 2. Decrypt: extract 12-byte nonce from `ciphertext[0..12]`, decrypt `ciphertext[12..]` with the key
 
@@ -290,6 +341,8 @@ GET /profile/:proxy
 ---
 
 ## Subscriber flow
+
+**Registration prerequisite.** Subscribers must hold a registered DEN identity proxy before they can authenticate with any instance. Call `DENIdentityRegistry.register()` with the subscriber's wallet once. This is the same one-time on-chain operation used in creator onboarding — a subscriber who has not registered will receive a 401 from `POST /auth/verify`.
 
 **1. Subscribe on-chain [chain]**
 ```
@@ -344,7 +397,7 @@ Key rotation is entirely client-driven. The instance supports it via existing en
    - Re-encrypt with new content key (`deriveKey(newMasterSecret, "tier:" + tierId)`)
    - `POST /creator/content` with new ciphertext → new fingerprint
    - `DENContentRegistry.registerContent(newFingerprint, tierId)` [chain]
-   - `DELETE /creator/content/:fingerprint` (old)
+   - `DELETE /creator/content/:fingerprint` → 204 No Content (clean up old record)
 
 **After all tiers complete:**
 
@@ -357,7 +410,7 @@ Key rotation is entirely client-driven. The instance supports it via existing en
 
 ## Migration (moving to a new instance)
 
-**Export from old instance:**
+**1. Export from old instance [instance]**
 ```
 GET /creator/export
 → {
@@ -367,20 +420,114 @@ GET /creator/export
   }
 ```
 
-**Import to new instance:**
+The export bundle contains the portability blob (encrypted to the creator's wallet — only they can decrypt it), all content references, and all signed access grants.
 
-1. Authenticate with the new instance
-2. `GET /creator/blob-pubkey` on the new instance
-3. Decrypt the portability blob with the creator's wallet private key → recover `masterSecret`
-4. Encrypt to the new instance's blob public key → new `operationalBlob`
-5. `PUT /creator/blob { operationalBlob, portabilityBlob }` on the new instance
-6. `POST /creator/import` with the export bundle
-7. Update the on-chain instance URL: `DENIdentityImpl.setInstanceUrl(newInstanceUrl)` [chain]
-8. Re-upload content ciphertext (the bundle contains fingerprints but not ciphertext — content bytes come from IPFS or manual re-upload)
-
-**Announce migration on-chain [chain]:**
+**2. Get the new instance's blob pubkey [instance]**
 ```
+GET <newInstance>/creator/blob-pubkey
+→ { pubKey: "0x02..." }
+```
+
+**3. Re-encrypt the master secret [client]**
+
+Decrypt the `portabilityBlob` from the export bundle using the creator's wallet private key (ECIES decryption) to recover `masterSecret`. Encrypt to the new instance's `pubKey` to produce the new `operationalBlob`.
+
+**4. Import the bundle to the new instance [instance]**
+```
+POST <newInstance>/creator/import
+Body: { portabilityBlob: "0x...", content: [...], grants: [...] }
+→ { imported: true, grantsImported: N, contentReferencesImported: N, ... }
+```
+
+Import validates every grant signature before writing anything — it is all-or-nothing. After a successful import, `GET /creator/blob` on the new instance returns `{ exists: false }` until the next step.
+
+**5. Upload the new operational blob [instance]**
+```
+PUT <newInstance>/creator/blob
+Body: { operationalBlob: "0x<re-encrypted>", portabilityBlob: "0x..." }
+→ { stored: true }
+```
+
+Key delivery (`POST /access/key`) will not work until this step completes. Do not announce the migration on-chain until this step succeeds.
+
+**6. Update the on-chain instance URL [chain]**
+```
+DENIdentityImpl.setInstanceUrl(newInstanceUrl)
 DENIdentityImpl.announceInstanceMigration(newInstanceUrl, operatorCounterSignature)
+```
+
+**7. Re-upload content ciphertext**
+
+The export bundle contains content references (fingerprints and metadata) but not ciphertext bytes. Content bytes must be retrieved from IPFS (if the old instance pinned to IPFS) or manually re-uploaded. Subscribers retain access to fingerprints that are already registered on-chain once key delivery is working on the new instance.
+
+**Recovery without migration (portability blob retrieval):**
+
+To retrieve the portability blob for local backup without triggering a full migration, use `GET /creator/portability-blob` on the current instance (auth required). The instance returns the blob encrypted to the authenticated wallet's key — primary wallet receives the portability blob, an emergency wallet receives the emergency portability blob.
+
+---
+
+## Moderation
+
+The moderation layer implements the protocol floor violation reporting path (spec §12). Client-relevant routes cover evidence submission for reporting subscribers, report inspection for any participant, and creator report discovery.
+
+**Submit evidence before filing a report [instance + chain]**
+
+A subscriber who needs to report a protocol floor violation first submits evidence to the instance to obtain the `evidenceHash` required by the on-chain `fileReport` call. The instance cannot file the on-chain report on the subscriber's behalf — the contract checks that `msg.sender` is the reporter's registered primary wallet.
+
+```
+POST /moderation/report
+Authorization: Bearer <sessionToken>
+Body: {
+  fingerprint:     "0x<64 hex>",   // SHA-256 of the content
+  accessTimestamp: 1700000000,      // Unix seconds when the content was accessed
+  category:        0,               // 0 = CSAM, 1 = NON_CONSENT
+  evidence:        "<base64>"       // evidence bytes (screenshots, descriptions)
+}
+→ { evidenceHash: "0x...", reportRegistryAddress: "0x..." }
+```
+
+Then call on-chain with the subscriber's wallet:
+```
+DENReportRegistry.fileReport(contentProxy, fingerprint, violationType, evidenceHash)
+```
+
+**View a report [instance]**
+
+Public and unauthenticated — reports are on-chain and readable by anyone.
+
+```
+GET /moderation/report/:id
+→ {
+    id, fingerprint, reporterProxy, accessTimestamp,
+    category, evidenceHash, status, filedAt, operatorConflict
+  }
+```
+
+**View all reports against your content [instance]**
+
+Creator-authenticated. Returns every active and historical report filed against content this creator has uploaded to the instance, including off-chain evidence bytes (if submitted via `POST /moderation/report`) and the governance-set response window.
+
+```
+GET /moderation/creator/reports
+Authorization: Bearer <sessionToken>
+→ {
+    creatorResponseWindowSeconds: "...",
+    reports: [{
+      reportId, fingerprint, reporterProxy, accessTimestamp,
+      category, evidenceHash, evidence: "<base64>" | null,
+      status, filedAt, operatorConflict
+    }]
+  }
+```
+
+**CSAM reinstatement after suspension expiry [instance]**
+
+Any authenticated participant may trigger permissionless reinstatement after the CSAM suspension period elapses with no law enforcement action. The contract enforces the time condition — this call reverts if the period has not elapsed or an LE hold is active.
+
+```
+POST /moderation/report/:id/reinstate
+Authorization: Bearer <sessionToken>
+→ { txHash: "0x...", reportId: "..." }
 ```
 
 ---
@@ -391,31 +538,45 @@ Live on-chain values that affect client behaviour. Fetch at startup or when need
 
 ```
 GET /governance/params
-→ { identity, content, compensation, trust_tiers, reporting, fees, misc }
+→ {
+    identity:     { wallet_rotation_delay, rotation_announcement_cooldown,
+                    handle_change_allowance, handle_change_period, handle_alias_retention_window },
+    content:      { subscriber_protection_window, sunset_window_duration },
+    compensation: { storage_compensation_lookback,
+                    instance_size_brackets: { micro_max, small_max, medium_max } },
+    trust_tiers:  { thresholds: { tier_1, tier_2, tier_3 }, lookback_window,
+                    post_size_limits: { tier_0, tier_1, tier_2, tier_3 },
+                    post_rate_limits: { tier_0, tier_1, tier_2, tier_3 } },
+    reporting:    { creator_response_window, csam_suspension_duration },
+    fees:         { protocol_fee_bps },
+    misc:         { inactivity_grace_period, batch_settlement_interval,
+                    subscription_expiry_grace_period, resolver_cache_ttl }
+  }
 ```
 
 Key values the client cares about:
 - `identity.wallet_rotation_delay` — delay window for compromise rotation (show to user)
 - `content.subscriber_protection_window` — how long subscribers retain access after sunset notice
 - `trust_tiers.post_size_limits` / `post_rate_limits` — enforce before attempting upload to avoid 413/429
-- `fees.protocol_fee_bps` — show the 2.5% protocol fee in subscription pricing UI
+- `fees.protocol_fee_bps` — show in subscription pricing UI (2.5% = 250 bps at launch)
+- `reporting.creator_response_window` — show to creators when a report is filed against their content
 
-All numeric values are strings (BigInt serialisation). `post_rate_limits.tier_3` is `"unlimited"`.
+All numeric values are strings (BigInt serialisation). `post_rate_limits.tier_3` returns `"unlimited"`. `trust_tiers.lookback_window` returns `"all-time"` when 0.
 
 ---
 
 ## On-chain contract reference
 
-All contracts are on Base (mainnet) / Base Sepolia (testnet). Addresses come from the instance operator's deployment — fetch them or configure them in `VITE_*` env vars.
+All contracts are on Base (mainnet) / Base Sepolia (testnet). Addresses are protocol constants per chain — they are not per-instance configuration and are not fetched from the instance. See `furden-architecture.md §2` for the contract address sourcing decision and the dev override pattern for local Anvil.
 
 | Contract | Key client calls |
 |---|---|
-| `DENIdentityRegistry` | `register()`, `getProxy(wallet)`, `handleOf(proxy)` |
-| `DENIdentityImpl` (via proxy) | `setInstanceUrl(url)`, `addEmergencyWallet(wallet)`, `initiateCleanRotation(...)`, `initiateCompromiseRotation(newWallet)` |
+| `DENIdentityRegistry` | `register()`, `isRegistered(wallet)`, `getProxy(wallet)`, `handleOf(proxy)` |
+| `DENIdentityImpl` (via proxy) | `setInstanceUrl(url)`, `addEmergencyWallet(wallet)`, `initiateCleanRotation(...)`, `initiateCompromiseRotation(newWallet)`, `announceInstanceMigration(url, sig)` |
 | `DENSubscription` | `setTier(tierId, price, duration, token)`, `subscribe(creatorProxy, tierId, token, amount)` |
 | `DENContentRegistry` | `registerContent(fingerprint, tierId)` |
 | `DENAccessGrant` | `publishGrant(tierId, paths, signature)` |
 | `DENPurchaseState` | `purchase(creatorProxy, listingId, token, amount)` |
 | `DENReportRegistry` | `fileReport(contentProxy, fingerprint, violationType, evidenceHash)` |
 
-ABI slices are in `den-protocol/instance/src/chain/abis.ts` — copy or reference them rather than writing from scratch.
+ABIs are in `den-protocol/abis.ts` — the single source of truth for both the instance and furden. Import from there rather than writing from scratch.

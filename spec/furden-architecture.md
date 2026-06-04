@@ -287,6 +287,8 @@ type SessionStore = {
 
 `isCreator` is derived from an on-chain read (`DENIdentityRegistry.isRegistered(walletAddress)`) after session establishment. It is not derived from the session token, which only authenticates the wallet — it does not imply a registered creator identity.
 
+**Subscriber registration.** Every participant — creators and subscribers alike — must call `DENIdentityRegistry.register()` before they can authenticate with any instance. The instance's `POST /auth/verify` checks `isRegistered()` and returns 401 for unregistered wallets. Subscribers who attempt to authenticate without registering will not receive a session token. The subscriber onboarding flow must include the `register()` call as a prerequisite to the subscription flow, with the same three-step transaction progress component used elsewhere. The `proxy` returned from auth is always a valid registered proxy — there is no null proxy case for an authenticated session.
+
 ### Crypto store (`useCryptoStore`)
 
 Devtools disabled. Never logged. Never serialized.
@@ -755,7 +757,7 @@ Separate stores were chosen. The primary reason is that `useCryptoStore` must ha
 
 **Vendored ABIs over a workspace package dependency**
 
-Contract ABIs are vendored into `src/lib/abis.ts` rather than imported from `den-protocol` via a workspace or `file:` dependency. The protocol is stable. den-protocol and furden are separate repositories. Requiring contributors to clone both repos to run `pnpm install` on the client is unnecessary friction. If the protocol contracts change, `src/lib/abis.ts` is updated as part of the same PR. The drift risk is accepted and managed by process, not by build tooling.
+Contract ABIs are vendored into `src/lib/abis.ts` rather than imported from `den-protocol` via a workspace or `file:` dependency. The source of truth is `den-protocol/abis.ts` — copy from there when the protocol contracts change. The protocol is stable. den-protocol and furden are separate repositories. Requiring contributors to clone both repos to run `pnpm install` on the client is unnecessary friction. If the protocol contracts change, `src/lib/abis.ts` is updated as part of the same PR. The drift risk is accepted and managed by process, not by build tooling.
 
 **Compile-time contract addresses over instance-fetched configuration**
 
@@ -775,7 +777,7 @@ These decisions have not been made. They must be resolved before the flows that 
 |---|---|---|
 | Accent colour final value | v1 visual review | Current token value is `#8b5cf6` (violet), provisional. Requires community input or designer decision. The token is in place; the value can change without touching component code. |
 | Rich text vs plain text for posts | Post composer implementation | Markdown adds a parsing dependency and HTML sanitisation requirement. Plain text is safe to ship. Recommendation: plain text for v1. |
-| Discover page content strategy | `/` route implementation | What does `GET /` query from the instance? Trending by subscription count? Most recently active? Instance-curated? Depends partly on what the instance API supports. Decide before building the discover route. |
+| Discover page content strategy | `/` route implementation | The instance has no discovery endpoint — no listing of creators, no trending query, no curated feed. The options are: (a) static landing page explaining DEN with a community-maintained or curated list of creators, (b) on-chain event scan (`TierSet` events from `DENSubscription`) to surface creators, or (c) defer `/explore` entirely. DEN is a destination not a discovery platform (den-architecture.md §6). The simplest correct answer for v1 is a static landing page. Decide before building the `/` and `/explore` routes. |
 | Image-only vs image + file attachments | Upload pipeline, content card design | Art packs as ZIP files require different content card treatment (download button vs. inline display) and affect the upload pipeline's file type handling. Decide before implementing the post composer. |
 | Content card aspect ratio | Feed layout implementation | Fixed ratio (crop, click for full) vs natural ratio (everything inline). Fixed is safer for mixed portrait/landscape feeds. Natural is more respectful of the artist's composition. |
 | Subscription renewal detection strategy | Subscription status display | Pull-based only (no push mechanism). Options: check on every feed load, check on page load, detect from key request failure. All three can be combined. |
