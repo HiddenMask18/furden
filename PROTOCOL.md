@@ -355,7 +355,24 @@ For ERC-20 tokens, approve `DENSubscription` for `amount` first. For ETH, pass `
 
 Same auth flow as creator. The subscriber's session is keyed to their proxy.
 
-**3. Request content key [instance]**
+**3. List the creator's content for a tier [instance]**
+
+Before requesting keys, enumerate what the creator has published to a tier you hold. The public `GET /profile/:proxy` exposes only public content and *warned* paywalled posts — unwarned paywalled posts are invisible there. This authenticated endpoint returns the full inventory for a single tier the caller is subscribed to. It is the data source for the subscriber feed.
+
+```
+GET /content/by-creator/:proxy?tierId=1
+Authorization: Bearer <sessionToken>
+→ {
+    content: [{ fingerprint: "0x...", tierId: "1", timestamp: 1700000000000, warnings: ["violence"] | null }],
+    nextCursor: null
+  }
+```
+
+Entitlement is gated per-tier by the same on-chain check as `POST /access/key`: the caller must hold an active subscription to `(proxy, tierId)` and the creator must have a signature-valid access grant for it, else `403`. Metadata only — no ciphertext, no keys. `timestamp` is Unix **milliseconds** (`Date.now()` on the instance), matching the `timestamp` field in `GET /profile/:proxy`. `content` is newest-first. `nextCursor` is reserved for future pagination and is always `null` in v1.
+
+To assemble the feed: enumerate your subscriptions on-chain via the `Subscribed(subscriberProxy, creatorProxy, tierId, expiresAt)` event keyed by your proxy, then call this endpoint per `(creator, tier)` and merge by timestamp. The instance has no aggregated feed endpoint — subscription enumeration is always client-side on-chain.
+
+**4. Request content key [instance]**
 ```
 POST /access/key
 Body: { type: "subscription", creatorProxy: "0x...", tierId: "1" }
@@ -365,14 +382,14 @@ Body: { type: "subscription", creatorProxy: "0x...", tierId: "1" }
 
 The instance verifies on-chain entitlement live (no cache). If the subscription has lapsed or the fingerprint is suspended, the request fails. Multiple keys may be returned if the creator's access grant covers multiple tiers.
 
-**4. Download ciphertext [instance]**
+**5. Download ciphertext [instance]**
 ```
 GET /content/:fingerprint
 Authorization: Bearer <sessionToken>
 → <ciphertext bytes>
 ```
 
-**5. Decrypt content [client]**
+**6. Decrypt content [client]**
 ```ts
 const keyHex  = keysResponse.keys['tier:1'];
 const keyBytes = fromHex(keyHex, 'bytes');
