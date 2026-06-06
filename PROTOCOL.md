@@ -72,7 +72,7 @@ async function encryptBlob(plaintext: Uint8Array, recipientPubKey: Uint8Array): 
 
 **Decryption (portability blob — creator's wallet key):**
 
-The portability blob is encrypted to the creator's wallet public key. To decrypt it (e.g. for migration), the client performs the same ECDH in reverse using the wallet private key as the recipient key. This requires the wallet to expose the raw private key — hold it only in memory and discard immediately after deriving the master secret.
+The portability blob is encrypted to the creator's wallet public key. Decrypting it (e.g. during migration) performs the same ECDH in reverse using the wallet *private* key as the recipient key. An injected browser wallet does not expose its private key, so this step is not achievable in-browser with a standard wallet — recovery requires a wallet that can export its key or an out-of-band key import. Whatever the source, hold the private key in memory only and discard it immediately after deriving the master secret. The encryption side (writing the blob) needs only a signature — see Creator onboarding step 5. This recovery-side gap is v1.x; see `furden-architecture.md` Appendix B.
 
 ---
 
@@ -176,18 +176,40 @@ Hold in memory only. This is the root of all content key derivation.
 
 **5. Encrypt the master secret [client]**
 
+The operational blob is encrypted to the instance's public key (step 3). The portability and emergency blobs are encrypted to *wallet* public keys — but an injected browser wallet (MetaMask, Rabby, Coinbase Wallet) exposes neither its private key nor its public key, only the ability to sign. Recover the wallet's secp256k1 public key from a signature: have the wallet sign a fixed message, then recover the public key from that signature.
+
 ```ts
-// Operational blob — encrypted to instance pubKey from step 3
-const instancePubKey   = fromHex(blobPubkeyResponse.pubKey, 'bytes');
-const operationalBlob  = await encryptBlob(masterSecret, instancePubKey);
+import { recoverPublicKey, hashMessage, toBytes } from 'viem';
 
-// Portability blob — encrypted to creator's wallet public key
-// Derive wallet pubKey from wallet private key via secp256k1.getPublicKey()
-const portabilityBlob  = await encryptBlob(masterSecret, walletPubKey);
+// Recover a wallet's secp256k1 public key by having it sign a fixed message.
+// Injected wallets never expose the key directly — this is the only way to obtain it
+// client-side. The message content is irrelevant to the math; keep it stable and explain
+// it to the user (it is what lets DEN encrypt a recovery copy of their keys back to them).
+async function recoverWalletPubKey(
+  signMessageAsync: (args: { message: string }) => Promise<`0x${string}`>,
+): Promise<Uint8Array> {
+  const message   = 'DEN: reveal public key to encrypt a recovery copy of your keys to this wallet';
+  const signature = await signMessageAsync({ message });
+  const pubKeyHex = await recoverPublicKey({ hash: hashMessage(message), signature });
+  return toBytes(pubKeyHex); // 65-byte uncompressed point (0x04…); @noble accepts it as a recipient key
+}
 
-// Emergency portability blob — only when an emergency wallet is registered
+// Operational blob — encrypted to the instance pubKey from step 3
+const instancePubKey  = fromHex(blobPubkeyResponse.pubKey, 'bytes');
+const operationalBlob = await encryptBlob(masterSecret, instancePubKey);
+
+// Portability blob — encrypted to the connected (primary) wallet's recovered pubkey
+const walletPubKey    = await recoverWalletPubKey(signMessageAsync);
+const portabilityBlob = await encryptBlob(masterSecret, walletPubKey);
+
+// Emergency portability blob — only when an emergency wallet is registered.
+// The emergency wallet's pubkey is recovered the same way *when that wallet is connected*
+// during its registration in settings (it is a different wallet, generally not connected
+// during onboarding), or recovered from a prior on-chain signature it has produced.
 const emergencyPortabilityBlob = await encryptBlob(masterSecret, emergencyWalletPubKey);
 ```
+
+> **Recovery-side limitation (v1.x).** The portability blob can be *written* with only a signature (above), but *reading* it back — decrypting to recover the master secret during migration — requires the wallet's private key for the reverse ECDH, which an injected wallet never exposes. In-browser recovery is therefore not achievable with a standard injected wallet in v1: it needs a wallet that can export its key, or an out-of-band key import. Migration UI is v1.x (DESIGN.md), so this is deferred — but onboarding copy must not promise a one-click in-app recovery it cannot yet deliver. Tracked in `furden-architecture.md` Appendix B.
 
 **6. Upload blobs [instance]**
 ```

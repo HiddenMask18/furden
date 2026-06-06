@@ -140,6 +140,7 @@ These are deliberate exclusions, not oversights. Each has a documented reason.
 | Comment systems | Out of protocol scope. |
 | Fiat onramp | DEN uses crypto-native payments. Onramp integration is structurally separate. |
 | Email/SMS recovery | Instance-level optional feature (spec §2.6.3). Not a v1 client design concern. |
+| Custom avatar / profile image upload | Instance API has no avatar storage. v1 uses deterministic identicons from the proxy address. Custom upload needs a new instance endpoint — v1.x. |
 | Light mode | v1 is dark only. Light mode can be added without rearchitecting. |
 
 ---
@@ -151,8 +152,7 @@ These are deliberate exclusions, not oversights. Each has a documented reason.
 ```
 PUBLIC — no wallet required
 ───────────────────────────────────────────────
-/                   Discover — trending creators, public content feed
-/explore            Browse creators
+/                   Landing — static; what DEN is + entry points (no discovery API)
 /[handle]           Creator profile (public content, tier cards, locked previews)
 /about              What is DEN — for users who don't know the protocol
 
@@ -187,7 +187,6 @@ Two distinct nav contexts:
 **Public / subscriber nav — top bar, full width**
 
 - Logo / home link (left)
-- Explore link
 - Feed link (shown only when authenticated)
 - Wallet badge (right) — shows truncated address when connected, "Connect Wallet" when not
   - Chain indicator embedded in the wallet badge (e.g. "Base" or "Base Sepolia" label or colored dot)
@@ -451,7 +450,7 @@ Every data-dependent surface has four states. All four must be designed. Acciden
 | State | Requirement |
 |---|---|
 | **Loading** | Skeleton or spinner. Never a blank white area. Never a page that partially loads without indication that more is coming. |
-| **Empty** | Actionable. "No posts yet — [Post your first content]" in the studio library. "No subscriptions yet — [Explore creators]" in the subscriber feed. |
+| **Empty** | Actionable where an in-app action exists. "No posts yet — [Post your first content]" in the studio library. The subscriber feed has no discovery destination to link to (no `/explore`), so its empty state is honest and informational: "No subscriptions yet. Creators share their DEN profile links directly — subscribe to one and their posts appear here." |
 | **Error** | Human-readable. No raw error text, no HTTP status codes. Always an action: retry, disconnect wallet, go back, try again later. |
 | **Partial** | Content loaded while supplementary data is still arriving (e.g. post visible while decryption keys are in flight). Render what you have. Skeletonize what's missing. |
 
@@ -537,9 +536,14 @@ All UX decisions are resolved. Decisions recorded here for reference; rationale 
 | Decision | Resolution |
 |---|---|
 | Rich text vs plain text | **Plain text for v1.** Markdown adds a parser and HTML sanitisation. v1.x addition. |
-| Discover page / `/` | **Static landing page.** Instance has no discovery API. `/explore` deferred. DEN is a destination, not a discovery platform. |
+| Discover page / `/` | **Static landing page.** Instance has no discovery API. No `/explore` route in v1. DEN is a destination, not a discovery platform. |
 | Image vs file attachments | **Images only for v1.** ZIPs require a second card variant and separate pipeline handling. Art pack support is v1.x. |
 | Content card aspect ratio | **Clamped natural ratio.** Render at true aspect ratio, clamped min 2:3 (portrait) to max 4:3 (landscape). `object-fit: contain` at boundaries — letterbox, no crop. |
 | Subscription renewal detection | **All three combined:** on page load, on feed load, and on key request failure. Complementary signals, not alternatives. |
 | Error copy voice | **Manifesto voice throughout.** Direct, first-person, no corporate hedging. Consistency across the app is the priority. |
 | Accent colour | **`#8b5cf6` (violet) provisional.** Token in place. Value confirmed or updated at visual review before v1 ship. |
+| Subscription price display | **Native token amount always; approximate USD ("~$5") layered on as a helper** from a public price API, omitted silently on failure. The on-chain token amount is the source of truth and the actual charge — USD is comprehension only, never implies a fiat charge. |
+| Creator avatars | **Deterministic identicon from the proxy address (v1).** Zero infrastructure, always present. Custom avatar/profile-image upload is out of scope (v1.x — needs an instance storage endpoint). |
+| Instance display name | **`VITE_INSTANCE_NAME` env var,** falling back to the `VITE_INSTANCE_URL` hostname if unset. No instance metadata endpoint in v1. |
+| Token price rendering | **On-chain ERC-20 `symbol()`/`decimals()` reads** (viem), cached per token; `address(0)` renders as ETH. No hardcoded token allowlist. |
+| Key recovery path | **Emergency wallet is the recovery path; copy stays honest.** No one-click in-app recovery is promised — in-browser portability-blob decryption needs a private key injected wallets don't expose. Fuller recovery/migration is v1.x. |

@@ -129,6 +129,13 @@ VITE_INSTANCE_URL
   (which it is for any normal deployment), the instance selection step is skipped
   and a confirmation is shown instead: "You're connected to [instance name]."
 
+VITE_INSTANCE_NAME
+  Optional. Human-readable display name for the configured instance, shown in
+  attribution copy ("Hosted on [name]", "You're connected to [name]").
+  If absent: furden falls back to the host portion of VITE_INSTANCE_URL, so the
+  label is never blank. The instance API exposes no name field — this is a
+  client-side deployment label, not fetched from the instance.
+
 VITE_WALLETCONNECT_PROJECT_ID
   Optional. WalletConnect Cloud project ID.
   Source: https://cloud.walletconnect.com
@@ -164,6 +171,9 @@ VITE_DEV_REPORT_REGISTRY_ADDRESS
 # Required
 VITE_CHAIN_ID=84532
 VITE_INSTANCE_URL=https://your-instance.example.com
+
+# Optional — instance display name (falls back to the hostname of VITE_INSTANCE_URL)
+VITE_INSTANCE_NAME=
 
 # Optional — WalletConnect (mobile wallet support)
 # Get a project ID at https://cloud.walletconnect.com
@@ -239,6 +249,12 @@ type ContractAddresses = {
 ```
 
 Mainnet and Sepolia addresses are populated once canonical deployments exist. Until then `getContracts(8453)` and `getContracts(84532)` throw with a clear message: "Contracts not yet deployed on this network." This surfaces misconfiguration at startup rather than silently failing at the first contract call.
+
+### Token metadata and price display
+
+Subscription tiers reference a payment token by contract address only. To render human-readable prices, furden reads the ERC-20 `symbol()` and `decimals()` on-chain via viem and caches them per token (both are immutable). `address(0)` is the ETH sentinel — it renders as "ETH" with 18 decimals and is not a contract call.
+
+The native token amount is always shown and is the source of truth (it is the amount actually charged on-chain). An approximate fiat figure ("~$5") is layered on top as a comprehension aid, fetched from a public price API (CoinGecko: by token contract address on Base, with an ETH special case), cached via TanStack Query. The fiat figure is explicitly approximate and is omitted silently when the lookup is unavailable — it never blocks rendering and never implies the charge is denominated in fiat. See Appendix A, "Subscription price display."
 
 ---
 
@@ -475,8 +491,7 @@ The `/connect` route stores the `from` search parameter and redirects back after
 src/routes/
 ├── __root.tsx            Layout with header nav, chain indicator, session provider
 │
-├── index.tsx             /          Discover — public, no auth required
-├── explore.tsx           /explore   Browse creators — public
+├── index.tsx             /          Landing (static) — public, no auth required
 ├── about.tsx             /about     What is DEN — public
 ├── connect.tsx           /connect   Wallet connection entry point
 ├── onboard.tsx           /onboard   Creator onboarding wizard
@@ -729,6 +744,51 @@ On completion: `usePipelineStore.clear()` is called. The encrypted blobs are rel
 
 ---
 
+## Section 9 — Client-Side On-Chain Indexing
+
+**Purpose:** Define how furden assembles subscriber-facing views — the subscriptions list and the content feed — from on-chain event logs, because the instance exposes no aggregation endpoints. Define the single-instance boundary for v1 and how it is enforced without ever showing a subscriber a broken-subscription screen.
+
+**Scope:**
+- Why the client reads chain events directly
+- Subscription enumeration via the `Subscribed` event
+- Authoritative subscription expiry via contract read
+- Creator → instance resolution and the single-instance boundary
+- The `/feed` assembly pipeline
+- `getLogs` range strategy and RPC constraints
+- Ownership: TanStack Query, not Zustand
+
+---
+
+**The instance is not an index.** A DEN instance stores ciphertext and gates keys against live on-chain state. It has no endpoint that lists which creators a wallet subscribes to, no trending query, and no cross-creator feed. It mirrors a subscription locally only as a side effect of a key request (PROTOCOL.md §Key delivery), so its local view is incomplete and non-authoritative. The canonical record of a subscriber's subscriptions lives on-chain in `DENSubscription`. furden reads it there directly. This is not a workaround for a missing endpoint — on-chain is the source of truth, and it is the only source that survives a subscriber holding subscriptions across more than one instance.
+
+**Subscription enumeration.** The `Subscribed(subscriberProxy indexed, creatorProxy indexed, tierId indexed, expiresAt)` event is the entry point. A single `getLogs` filtered on the indexed `subscriberProxy` topic returns every subscription the connected wallet's proxy holds, each carrying its `creatorProxy`, `tierId`, and `expiresAt` inline. This one query is the backbone of both `/subscriptions` and `/feed`:
+
+- A re-subscribe (calling `subscribe()` again) emits a fresh `Subscribed` event. Dedupe the log set by `(creatorProxy, tierId)`, keeping the entry from the highest block.
+- The set of distinct `creatorProxy` values is the creator list for the feed.
+
+**Expiry is read live, not trusted from the event.** The `expiresAt` in a `Subscribed` log is correct as of the moment of that subscription, but the authoritative current expiry is whatever `DENSubscription.getSubscriptionExpiry(subscriberProxy, creatorProxy, tierId)` returns now. `/subscriptions` uses events for discovery (which subscriptions exist) and a contract read per subscription for current state — active / expiring soon / expired, and the renewal date. This mirrors the instance's own philosophy: on-chain is the authority, and access-relevant state is never cached past the moment it matters.
+
+**Creator → instance resolution and the single-instance boundary.** Each `creatorProxy` resolves to a home instance URL recorded on-chain (`DENIdentityImpl.setInstanceUrl`, read via the current value or the `InstanceURLUpdated` event). furden routes every per-creator operation — profile fetch, content listing, key request, ciphertext download — to the creator's resolved instance URL, not to a single global base URL.
+
+In v1, furden renders content only for creators whose resolved instance URL equals `VITE_INSTANCE_URL`. A subscription to a creator hosted elsewhere is **not** an error and never produces a broken-subscription screen. On `/subscriptions` it renders as an honest link-out — "Hosted on another DEN site → Open" — linking to that creator's instance. This is the single-instance scope decision (Appendix A; DESIGN.md) made concrete.
+
+The discipline that keeps multi-instance a future flip rather than a rewrite: route by the resolved instance URL from the first line of code. v1 asserts `resolved === VITE_INSTANCE_URL` and link-outs otherwise. Enabling cross-instance feeds later means removing that assertion and authenticating a session per instance — not re-plumbing how creators are addressed.
+
+**The `/feed` assembly pipeline.**
+
+1. **Enumerate** — one `getLogs` on `Subscribed` by `subscriberProxy` → the `(creatorProxy, tierId, expiresAt)` set. [one chain query]
+2. **Resolve & filter** — resolve each `creatorProxy` to its instance URL; keep those equal to `VITE_INSTANCE_URL`; the rest are link-outs surfaced only on `/subscriptions`, not in the feed.
+3. **Fetch per (creator, tier)** — for each retained pair, in parallel: `GET /content/by-creator/:creatorProxy?tierId=` (inventory) and `POST /access/key` (the tier key). The content list and key request are the two siblings of the same per-tier entitlement model (Section 8).
+4. **Merge & decrypt** — concatenate all inventory items, sort by `timestamp` (Unix ms) descending, and decrypt each card's ciphertext as it downloads (Section 8 decryption pipeline). The feed renders progressively; a single creator's instance being slow or down degrades to a skeleton for that creator's cards, not a failed feed.
+
+A single creator's profile (DESIGN.md Flow 5) is the same pipeline scoped to one `creatorProxy`: list the tiers the viewer holds, fetch inventory + keys for those, and render locked teasers for tiers they do not hold (from the public profile's tier cards and warned-content metadata).
+
+**`getLogs` range strategy.** `fromBlock` is the contract's deployment block — a per-chain constant in `src/lib/chain.ts`, never `0` — so the query does not scan pre-deployment history. Public Base RPC endpoints may cap the block range of a single `getLogs`; when a full-range query is rejected, furden chunks the range into fixed windows and concatenates results. The `Subscribed` filter is indexed on `subscriberProxy`, so the matched-log volume is small (one wallet's own subscriptions) even when the scanned range is large. If public-RPC log latency becomes a launch problem, the mitigation is a dedicated RPC or a light indexer — not a protocol change; this pipeline is unchanged by where the logs come from.
+
+**Ownership.** All of this is server state and lives in TanStack Query — keyed by `subscriberProxy` for the enumeration and by `creatorProxy` for resolution and profiles. The creator → instance-URL resolution is cacheable for the governance `resolver_cache_ttl` window. None of it belongs in Zustand: it is fetched, cached, and invalidated, not imperatively mutated. The enumeration query is invalidated when this session broadcasts a new `subscribe()` transaction, so a just-subscribed creator appears without a manual refresh.
+
+---
+
 ## Appendix A — Resolved Decisions
 
 A record of architectural decisions that were considered, evaluated, and resolved. Maintained here so future discussions have context for what was already worked through.
@@ -773,7 +833,7 @@ Plain text was chosen for v1. Markdown adds a parser dependency and requires HTM
 
 **Static landing page for `/` — no instance-backed discovery**
 
-The instance has no discovery API — no endpoint for listing creators, no trending query, no curated feed. `/` cannot be backed by server-side discovery queries. `/` is a static landing page for v1 explaining what DEN is, with a community-maintained or curated creator list. `/explore` is deferred. This is consistent with den-architecture.md §6: DEN is a destination after discovery happens elsewhere, not a discovery platform.
+The instance has no discovery API — no endpoint for listing creators, no trending query, no curated feed. `/` cannot be backed by server-side discovery queries. `/` is a static landing page for v1 explaining what DEN is, optionally with a hand-curated (hardcoded, not API-backed) creator list. There is no `/explore` route in v1 — see the dedicated entry below. This is consistent with den-architecture.md §6: DEN is a destination after discovery happens elsewhere, not a discovery platform.
 
 **Images only — no file attachments (v1)**
 
@@ -806,11 +866,43 @@ Error messages, empty states, and system copy use the manifesto voice: direct, f
 
 `#8b5cf6` (violet) is confirmed as the working value in `--color-accent`. It is not blocked: the token structure is correct and all components use the token. The value is reviewed and confirmed or updated before v1 ship. No component code changes when the value changes — it is a single line in `tokens.css`.
 
+**Single-instance subscriber scope for v1**
+
+The subscriber's active experience — browse, feed, view, subscribe — is scoped to the one configured `VITE_INSTANCE_URL`. A creator hosted on a different instance is not rendered inline; on `/subscriptions` such a subscription appears as an honest link-out to that creator's instance, never a broken-subscription error. The rejected alternative was full multi-instance support in v1: resolving each creator's instance from chain and authenticating a separate session per instance. That is a real subsystem (per-instance auth means a wallet signature per instance — friction that cannot be hidden), not a flag, and the unified cross-instance feed it enables is a v1.x goal. The decision was reasoned from UX first: discovery is off-platform, so subscribers arrive at a creator via that creator's own link, which already points at the creator's home instance; the only thing wanting multi-instance is a unified cross-creator feed. The extensibility hedge — route everything by the creator's chain-resolved instance URL from day one and merely assert equality in v1 — makes the later switch a removal of that assertion, not a rewrite. See Section 9.
+
+**Client-side on-chain indexing over instance aggregation endpoints**
+
+Subscriber views are assembled from contract event logs (`Subscribed`, `ContentRegistered`), not from instance aggregation endpoints, because the instance is a ciphertext store and key gate, not an index — it has no authoritative list of a wallet's subscriptions. The rejected alternative was pushing subscription/feed indexing into the instance; that would make the instance a chain indexer and still could not see subscriptions to creators on other instances. On-chain enumeration is the only source of truth that works across instances. The one place the instance *is* the right source — listing a creator's content for a tier the subscriber holds — is served by `GET /content/by-creator/:proxy?tierId=` (Section 8, PROTOCOL.md), because the instance already holds that data and on-chain `ContentRegistered` events would be the slower, chattier path on the hot feed load. See Section 9.
+
+**Subscription price display — native amount always, approximate USD as a helper**
+
+Prices render in their native token amount at all times (e.g. "5 USDC / month", "0.01 ETH / month") — that is the on-chain source of truth and the amount actually charged. Alongside it, an approximate fiat figure ("~$5") is shown as a comprehension aid, fetched from a public price API (CoinGecko: by token contract address on Base, plus an ETH special case) and cached via TanStack Query. The fiat figure carries a leading "~", and is omitted silently when the lookup is unavailable — it never blocks rendering and never implies the charge is denominated in fiat. Rejected: USD-only (misrepresents a crypto-native charge) and native-only (the personas — River is crypto-new — need a price anchor to judge whether a subscription is worth it). No required configuration; graceful degradation when the API is unreachable. See Section 3, "Token metadata and price display."
+
+**Creator avatars — deterministic identicon from the proxy address (v1)**
+
+v1 derives each creator's avatar deterministically from their proxy address (a jazzicon/blockies-style identicon). Zero infrastructure, no upload pipeline, and every creator gets a stable, recognisable mark from day one with no fallback-blank case. **Custom avatar / profile-image upload is explicitly out of scope for v1.** The instance API has no avatar field and no avatar storage, so real uploads require a new instance endpoint — that is a v1.x instance-side change, not a client-only one, and is deliberately deferred.
+
+**Instance display name — `VITE_INSTANCE_NAME` env var (v1)**
+
+Attribution copy ("Hosted on [name]", "You're connected to [name]") reads from a build-time `VITE_INSTANCE_NAME` env var set by the operator. If unset, furden falls back to the host portion of `VITE_INSTANCE_URL`, so the label is never blank. Rejected for v1: a `GET /info` instance metadata endpoint — operator-authoritative and nicer, but it is another instance change and a startup dependency for a cosmetic label. Revisit `/info` when the instance grows a metadata surface. The env var is the mechanism; the hostname fallback is defensive, not a second source.
+
+**Token symbol & decimals — on-chain ERC-20 reads**
+
+Tier pricing carries only a token contract address. furden renders human amounts by reading ERC-20 `symbol()` and `decimals()` on-chain via viem, caching per token (both immutable), with `address(0)` rendered as "ETH" (18 decimals, no contract call). Rejected: a hardcoded known-token allowlist — it silently breaks for any token a creator legitimately chooses outside the list, while the on-chain read is a few lines and is the correct source. See Section 3, "Token metadata and price display."
+
+**`/explore` — removed from v1**
+
+There is no `/explore` route in v1. The instance exposes no discovery API (no creator listing, no trending query), so a browse surface cannot be backed by instance queries (consistent with "Static landing page for `/`" above). `/` is the static landing page and the header carries no Explore link. The DESIGN.md IA route structure and nav model are reconciled to match — their earlier "Browse creators" / "Discover — trending creators" wording was stale relative to the resolved decision. A curated or community-maintained browse surface, if wanted, is a later addition and does not block v1.
+
+**Portability-blob recovery — emergency wallet is the path, copy stays honest**
+
+Onboarding presents the **emergency wallet** as the recovery path — the protocol-native mechanism: a second registered wallet receives its own emergency portability blob, decryptable by that wallet. Onboarding does **not** promise one-click in-app key recovery, because in-browser decryption of a portability blob needs a private key an injected wallet never exposes (PROTOCOL.md onboarding step 5). The copy states plainly that registering an emergency wallet is the backup path and that fuller recovery/migration tooling arrives in v1.x. Rejected as the sole answer: a seed-phrase backup prompt — that conflates wallet custody (the wallet's own responsibility) with DEN key recovery; onboarding may still remind users their wallet is their key, as DESIGN.md Flow 2 Step 1 already does, but that is not a substitute for the emergency-wallet path.
+
 ---
 
 ## Appendix B — Open Questions
 
-No open questions. All decisions recorded in Appendix A.
+No open questions. The items opened on 2026-06-06 (after cross-checking the spec against the implemented instance API) were resolved the same day and recorded in Appendix A. This section is intentionally empty — and the way to keep it honest is to reopen it explicitly the moment a new gap is found, rather than leaving a known gap unrecorded. The earlier blanket "no open questions" claim was wrong precisely because gaps existed and were not listed here.
 
 ---
 
