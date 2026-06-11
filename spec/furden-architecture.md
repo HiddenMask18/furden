@@ -40,7 +40,9 @@ These constraints flow directly from the DEN protocol and cannot be negotiated b
 
 **Content key** — a 32-byte AES-256-GCM key. For paywalled content: derived from the master secret via `HKDF-SHA256(ikm=masterSecret, salt=none, info=path)`, unique per tier derivation path (e.g. `"tier:1"`); subscribers receive it from `POST /access/key` — the instance derives it server-side. For public content: a **fresh random per-post key** (`crypto.getRandomValues`), supplied as the `contentKey` field and published in the profile. Derived keys are never published — a tier key as a public `contentKey` would unlock the entire tier for anyone (see Appendix A, "Public content keys").
 
-**Fingerprint** — the SHA-256 hash of a content blob's ciphertext bytes, computed server-side by the instance after upload (`POST /creator/content`). The client does not know the fingerprint before the upload completes. On-chain registration (`DENContentRegistry.registerContent`) requires the fingerprint returned by the upload response.
+**Post envelope** — the plaintext serialisation of a post (body text + zero or more images) into a single binary container: `"DENP"` magic, version byte, length-prefixed JSON header (text, image manifest with byte lengths, MIME types, and pixel dimensions), then raw image bytes. One post = one envelope = one encrypted blob = one fingerprint = one `registerContent` transaction. Defined normatively in PROTOCOL.md §Post envelope; implemented as pure functions in `src/lib/envelope.ts`.
+
+**Fingerprint** — the SHA-256 hash of a content blob's ciphertext bytes, computed server-side by the instance after upload (`POST /creator/content`). The client does not know the fingerprint before the upload completes. On-chain registration (`DENContentRegistry.registerContent`) requires the fingerprint returned by the upload response. Because one post is one blob, the fingerprint is also the post's stable identity — permalinks key on it.
 
 **Operational blob** — the master secret encrypted to the instance's per-creator public key using ECIES. Stored on the instance. Allows the instance to derive content keys for subscriber access without holding the plaintext master secret. Defined in PROTOCOL.md §ECIES.
 
@@ -334,12 +336,12 @@ Holds state across the three phases of the posting flow (encrypt → upload → 
 ```ts
 type PipelineStore = {
   phase:           'idle' | 'encrypting' | 'uploading' | 'registering' | 'done' | 'error'
-  encryptedBlobs:  Map<string, Uint8Array> | null  // filename → encrypted bytes
-  fingerprint:     string | null                    // returned after upload
-  tierId:          number | null
+  encryptedBlob:   Uint8Array | null  // the encrypted post envelope — one blob per post
+  fingerprint:     string | null      // returned after upload
+  tierId:          number | null      // 0 = public post (reserved)
   error:           PipelineError | null
   startEncryption: (tierId: number) => void
-  setEncrypted:    (blobs: Map<string, Uint8Array>) => void
+  setEncrypted:    (blob: Uint8Array) => void
   setFingerprint:  (fp: string) => void
   setPhase:        (phase: PipelineStore['phase']) => void
   setError:        (err: PipelineError) => void
@@ -347,9 +349,9 @@ type PipelineStore = {
 }
 ```
 
-**`encryptedBlobs` lifecycle:** Set after Phase 1 (local encryption) completes. Held through Phase 2 (upload) so the upload can be retried without re-encrypting if the network fails. Cleared after Phase 3 (on-chain registration) succeeds or on explicit `clear()`. Not cleared on Phase 2 failure — the retry path depends on it.
+**`encryptedBlob` lifecycle:** Set after Phase 1 (envelope build + local encryption) completes. Held through Phase 2 (upload) so the upload can be retried without re-encrypting if the network fails. Cleared after Phase 3 (on-chain registration) succeeds or on explicit `clear()`. Not cleared on Phase 2 failure — the retry path depends on it. One post is one envelope is one blob, so the singular `encryptedBlob`/`fingerprint` pair is the whole pipeline state — there is no per-file bookkeeping.
 
-**Design rationale:** The encrypted blobs can be large (multiple megabytes for image posts). Storing them in Zustand means they live in the JS heap alongside the rest of the store. This is intentional — they are not written to disk and they are cleared as soon as the post succeeds. The alternative (Web Worker with postMessage) is deferred to v1.x per DESIGN.md.
+**Design rationale:** The encrypted blob can be large (multiple megabytes for image posts). Storing it in Zustand means it lives in the JS heap alongside the rest of the store. This is intentional — it is not written to disk and it is cleared as soon as the post succeeds. The alternative (Web Worker with postMessage) is deferred to v1.x per DESIGN.md; a single `Uint8Array` moves to a Worker as a `Transferable` with zero copies when that time comes.
 
 ### Governance store (`useGovernanceStore`)
 
@@ -497,6 +499,13 @@ src/routes/
 ├── onboard.tsx           /onboard   Creator onboarding wizard
 │
 ├── $handle.tsx           /$handle   Creator profile (public + subscriber view)
+├── $handle.post.$fingerprint.tsx
+│                         /$handle/post/$fingerprint   Post permalink (one post = one
+│                         fingerprint, so the fingerprint is the post's stable identity).
+│                         Same access rules as the profile: public posts render for anyone,
+│                         paywalled posts render locked until a key is held. "Copy link to
+│                         post" emits the den-spec §6.4 shareable form
+│                         (den://$handle/post/$fingerprint), never an instance URL.
 │
 ├── feed.tsx              /feed           Subscriber guard
 ├── subscriptions.tsx     /subscriptions  Subscriber guard
@@ -683,15 +692,16 @@ When a subscriber loads a creator's profile or feed, content keys are requested 
 
 ### Decryption pipeline
 
-For each content item to be displayed:
+For each post (card) to be displayed:
 
 1. Check content key cache for the tier. If missing, show locked overlay.
 2. `GET /content/:fingerprint` — download ciphertext bytes
 3. Slice: `nonce = ciphertext[0..12]`, `ct = ciphertext[12..]`
 4. `crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce }, aesKey, ct)` → plaintext bytes
-5. Create object URL from plaintext bytes → set as `<img src>`
+5. `parseEnvelope(plaintext)` → `{ text, images: [{ bytes, type, w, h }] }` (`src/lib/envelope.ts`)
+6. Per image: create an object URL from its bytes (typed with the declared MIME) → `<img src>`. The header's `w`/`h` size each image container *before* decode, so the card's clamped aspect-ratio layout is stable from the first paint. Render `text` as plain text alongside.
 
-Steps 2–5 happen per card. Step 2 (download) and step 4 (decrypt) run concurrently for multiple cards when a feed loads — do not serialize them.
+Steps 2–6 happen per card. Step 2 (download) and step 4 (decrypt) run concurrently for multiple cards when a feed loads — do not serialize them. An envelope that fails validation in step 5 renders the same error card as a decryption failure — malformed framing and a wrong key are indistinguishable states to the viewer. Object URLs are revoked when the card unmounts.
 
 **Latency handling:**
 - Card shows skeleton during steps 2–4
@@ -703,22 +713,25 @@ Steps 2–5 happen per card. Step 2 (download) and step 4 (decrypt) run concurre
 
 Three sequential phases with explicit state transitions in `usePipelineStore`.
 
-**Phase 1 — Local encryption** (`encrypting`)
+**Phase 1 — Envelope build + local encryption** (`encrypting`)
 
-For each file:
+One operation per post, not per file:
 ```
-key   = HKDF-SHA256(masterSecret, "tier:" + tierId)   // paywalled: tier-derived
-      | crypto.getRandomValues(32 bytes)              // public: fresh random per-post key
-nonce = crypto.getRandomValues(12 bytes)
-ct    = AES-256-GCM.encrypt(key, nonce, plaintext)
-blob  = concat(nonce, ct)
+plaintext = buildEnvelope(text, images)               // src/lib/envelope.ts — PROTOCOL.md §Post envelope
+key       = HKDF-SHA256(masterSecret, "tier:" + tierId)   // paywalled: tier-derived
+          | crypto.getRandomValues(32 bytes)              // public: fresh random per-post key
+nonce     = crypto.getRandomValues(12 bytes)
+ct        = AES-256-GCM.encrypt(key, nonce, plaintext)
+blob      = concat(nonce, ct)
 ```
+
+Before encrypting, the composer checks `plaintext.length + 28 ≤ post_size_limit(trustTier)` — the only size constraint the protocol enforces is total blob bytes. Per-file caps and the maximum image count are composer policy (v1: 10 images per post, a plain constant).
 
 Public posts are never encrypted with a derived key — the key is published in the profile, and a published tier key would unlock the whole tier (Appendix A, "Public content keys"). Public posts upload with `X-Tier-Id: 0` (reserved; real tiers number from 1) and supply the random key to the visibility endpoint after registration.
 
-All encryption runs on the main thread in v1. Web Worker extraction is a v1.x improvement — the pipeline store's `Map<filename, Uint8Array>` shape is designed to transfer cleanly to a Worker via `Transferable` when the time comes.
+All envelope assembly and encryption runs on the main thread in v1. Web Worker extraction is a v1.x improvement — the single `Uint8Array` blob transfers to a Worker as a `Transferable` with zero copies when the time comes.
 
-Phase 1 has no network dependency. If Phase 1 fails (e.g. memory pressure on a large file), the error surfaces in the pipeline store and the user can retry from the composer without data loss — the original files are still in the file input.
+Phase 1 has no network dependency. If Phase 1 fails (e.g. memory pressure on a large post), the error surfaces in the pipeline store and the user can retry from the composer without data loss — the original files are still in the file input.
 
 **Phase 2 — Upload** (`uploading`)
 
@@ -907,6 +920,12 @@ There is no `/explore` route in v1. The instance exposes no discovery API (no cr
 
 The protocol and instance already carry one-time purchase support (`DENPurchaseState`, `POST /access/key` with `type: "purchase"`, `"item:<id>"` derivation paths). furden v1 implements subscriptions only; no listing management in the studio, no purchase flow, no `item:` key requests. The contract surface is stable, so adding the shop in v1.x is additive client work, not a protocol change. Recorded 2026-06-11 so the omission reads as a decision, not an oversight.
 
+**Post envelope — one post, one blob, length-prefixed binary container with a JSON header**
+
+A post (text + images) serialises into a single plaintext envelope encrypted as one blob: `"DENP"` magic, version byte, uint32 header length, UTF-8 JSON header (text, image manifest with `len`/`type`/`w`/`h`), then raw image bytes in manifest order. Normative definition in PROTOCOL.md §Post envelope. One post = one fingerprint = one `registerContent` transaction = one rate-limit unit = one size budget — which is what the governance parameter (`post_size_limits`) and the composer copy already meant by "post". The fingerprint becomes the post's stable identity (permalinks). Per-file caps and the image count cap (v1: 10) are composer policy; the instance enforces only total blob bytes and cannot see inside the envelope — file count and per-image sizes stay hidden from the hoster, which is a feature. Header `w`/`h` lets cards lay out at the correct clamped aspect ratio before image decode. Warnings stay *outside* the envelope (instance metadata) because teaser cards must render them without the key.
+
+Rejected: **per-image blobs** (no home for post text, N wallet confirmations and N rate-limit units per post, leaks image count/sizes to the hoster, and one "post" could consume N× the post size limit); **JSON with base64 images** (~33% size-budget inflation); **CBOR container** (fine format, but adds a runtime dependency to the content-decryption path that is otherwise only `@noble/*` + Web Crypto, for ~60 lines of saved parsing). Accepted costs: a post renders only after the whole blob downloads and decrypts (no per-image lazy loading or thumbnails), and editing any part of a post is a new blob, new fingerprint, new registration. Resolved 2026-06-11.
+
 **Public content keys — fresh random per-post key, never tier-derived**
 
 The `contentKey` published for a public post is a fresh random 32-byte key generated at encryption time. The rejected (and previously documented) alternative — supplying `deriveKey(masterSecret, "tier:" + tierId)` — is a tier-wide confidentiality break: registration is permissionless, `GET /content/:fingerprint` serves private ciphertext on authentication alone, and paywalled fingerprints are enumerable from on-chain `ContentRegistered` events, so one public post would hand every authenticated participant the key to all of that tier's paywalled content, permanently. The instance stores whatever key it is given and cannot verify derivation — the discipline is the client's. Consequences accepted with the decision: public posts upload under reserved `X-Tier-Id: 0` (real tiers number from 1), and visibility toggles are re-encryption events (new blob, new fingerprint, new registration) rather than metadata flips, with honest copy that returning a post to paywalled does not un-publish what was public. No instance or contract change required. Resolved 2026-06-11.
@@ -919,15 +938,7 @@ Onboarding presents the **emergency wallet** as the recovery path — the protoc
 
 ## Appendix B — Open Questions
 
-Reopened 2026-06-11. A second audit against the instance source and the contracts surfaced one unresolved design decision. (The other findings from that audit — the missing instance countersignature endpoint, the `isCreator` derivation, `$handle` resolution, the `POST /access/key` wording, and the PROTOCOL.md contract-table signatures — were fixed the same day; see Appendix A and PROTOCOL.md.)
-
-**1. Post plaintext envelope format.** DESIGN's composer produces a *post*: text + one or more images + warnings, with a single fingerprint and a "Copy link to post" action. The protocol has no post concept — one upload is one opaque ciphertext blob, one fingerprint, one `registerContent` transaction, and the governance size/rate limits apply per blob. Nothing yet defines how a post serialises into plaintext before encryption.
-
-Leading direction: **one post = one blob**, containing a binary envelope (length-prefixed or CBOR — not JSON-with-base64, which inflates image bytes ~33%) holding the text, the image bytes, and an image count/manifest. This gives one fingerprint per post (post identity and permalinks fall out for free), one wallet confirmation per post, one rate-limit unit per post, and atomic publish.
-
-On per-file limits and file-count differentiation under this model: **the instance cannot and should not enforce them.** The blob is E2EE ciphertext — the hoster cannot see how many files are inside or how large each is, and that opacity is a feature (file count and per-image sizes are metadata the hoster has no need to learn). The hoster's only legitimate constraint is total stored bytes, which `POST /creator/content` already enforces per blob — and with an envelope, "per blob" and "per post" coincide, which is exactly what the governance parameter is named (`post_size_limits`) and what DESIGN's composer copy already says ("up to X MB per post"). Per-file caps and a max-images-per-post number are therefore *client-side composer policy* (UX sanity, decode memory, decrypt latency), not protocol rules: the composer budgets total plaintext size against the tier limit (encryption overhead is a fixed 28 bytes), shows total-vs-limit as DESIGN specifies, and applies its own image-count cap.
-
-Costs to weigh before resolving: a post renders only after the whole blob downloads and decrypts (no per-image lazy loading or thumbnails — a 20 MB post fetches 20 MB to show its first pixel), and editing/removing one image means a new blob, new fingerprint, new registration. Resolve before implementing the composer or feed card; blocked on nothing but the decision itself. Needs a "content plaintext format" section in PROTOCOL.md, a §8 pipeline update (the pipeline store currently holds a `Map` of encrypted blobs but a singular `fingerprint` — the envelope model collapses this to one blob), and a post-permalink route in §6 if "Copy link to post" stays. Note for the permalink: den-spec §6.4 requires shareable links to use the `den://[handle]` / `den://[identity-contract-address]` form, never an instance-specific URL — the copy action must emit that form (with whatever web fallback the route layer provides).
+No open questions as of 2026-06-11. The post-envelope format — the last item opened here — is resolved and recorded in Appendix A ("Post envelope") and PROTOCOL.md §Post envelope. The way to keep this section honest is to reopen it explicitly the moment a new gap is found, rather than leaving a known gap unrecorded; it has been wrong twice by claiming emptiness while gaps existed, so treat an empty Appendix B as a prompt to re-audit, not as proof of completeness.
 
 ---
 

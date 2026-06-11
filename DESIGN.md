@@ -154,6 +154,9 @@ PUBLIC — no wallet required
 ───────────────────────────────────────────────
 /                   Landing — static; what DEN is + entry points (no discovery API)
 /[handle]           Creator profile (public content, tier cards, locked previews)
+/[handle]/post/[fingerprint]
+                    Post permalink — public posts render for anyone; paywalled
+                    posts render locked until a key is held
 /about              What is DEN — for users who don't know the protocol
 
 SUBSCRIBER — wallet connected + active session
@@ -350,7 +353,8 @@ Left panel — content:
 - Image upload area: drag-and-drop or file picker
   - Selected images shown as thumbnails in a row, each with a remove button
   - Per-file size shown on hover; total size shown in upload area footer
-  - Soft limit from governance params surfaced as tooltip: "Your trust tier allows up to [X] MB per post"
+  - Soft limit from governance params surfaced as tooltip: "Your trust tier allows up to [X] MB per post" — the limit is per post (the whole envelope), matching the protocol's per-blob enforcement
+  - Maximum 10 images per post (client policy, a plain constant — not a protocol rule)
 
 Right panel — settings:
 - **Access level:** segmented control or dropdown — "Public" or list of creator's tier names
@@ -369,7 +373,7 @@ Three sequential phases:
 
 **Phase 1 — Encrypting**
 "Encrypting your content on this device..."
-- Per-file progress if multiple images
+- One operation: the post (text + images) is packed into a single envelope and encrypted as one blob (see PROTOCOL.md §Post envelope) — indeterminate progress, not per-file
 - This is local computation — no network involved
 - Note displayed: "Your content is encrypted here, in your browser, before it's sent anywhere."
 
@@ -387,7 +391,7 @@ Three sequential phases:
 **Done state:**
 - "Your post is live"
 - Post card preview (same as the preview from the composer)
-- "Copy link to post" button
+- "Copy link to post" button — copies the shareable `den://[handle]/post/[fingerprint]` form (den-spec §6.4: shareable links never use an instance-specific URL)
 - "Back to Studio" and "Post Again" CTAs
 
 **Error recovery:**

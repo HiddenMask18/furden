@@ -111,6 +111,51 @@ The fingerprint is SHA-256 of the **ciphertext bytes** (the full blob as uploade
 
 ---
 
+### Post envelope (content plaintext format)
+
+The protocol treats a content blob as opaque bytes; what those bytes *are* is a client convention. furden's unit of content is a **post** — body text plus zero or more images — serialised into a single plaintext envelope, encrypted as **one blob** with **one fingerprint**. One post is therefore one upload, one `registerContent` transaction, one rate-limit unit, and one size-limit budget.
+
+**Envelope v1 — byte layout:**
+
+```
+offset      size       field
+0           4          magic: ASCII "DENP"
+4           1          version: 0x01
+5           4          headerLen: uint32, big-endian
+9           headerLen  header: UTF-8 JSON (shape below)
+9+headerLen ...        image payloads: raw bytes, concatenated in header order
+```
+
+**Header JSON:**
+
+```json
+{
+  "text": "post body — plain text, may be empty",
+  "images": [
+    { "len": 123456, "type": "image/png", "w": 1920, "h": 1080 }
+  ]
+}
+```
+
+- `images[].len` — exact byte length of that image's payload. Image payloads appear after the header in array order; offsets are the cumulative sums. `images` may be empty (text-only post).
+- `images[].type` — MIME type, used for the object URL at render time.
+- `images[].w` / `images[].h` — pixel dimensions, captured at compose time. These let cards reserve correct layout (the clamped aspect-ratio rules) before image decode — no layout shift.
+- Image bytes are **raw** — never base64 (a JSON-embedded encoding would inflate the size budget ~33%).
+
+**Validation on parse** (failures render the "content could not be decrypted" error card, same path as a decryption failure):
+
+1. `magic == "DENP"`, `version == 0x01` (unknown versions are an error, not a guess)
+2. `9 + headerLen ≤ plaintext.length`; header parses as JSON with the shape above
+3. `9 + headerLen + Σ images[].len == plaintext.length` — the envelope accounts for every byte
+
+**Size budget:** plaintext envelope size is `9 + headerLen + Σ image bytes`; encryption adds exactly 28 bytes (12-byte nonce + 16-byte tag). The composer enforces `envelopeSize + 28 ≤ post_size_limit(trustTier)` before encrypting. Per-file caps and a maximum image count are client composer policy, not protocol rules — the instance sees only total ciphertext bytes (it cannot see inside the envelope, by design: file count and per-image sizes are metadata the hoster never learns).
+
+**What stays outside the envelope:** content warnings travel as instance metadata (`X-Warnings` header) — they must be readable *without* the content key, because locked and blurred teaser cards render warnings to non-subscribers. Tier and timestamp are likewise instance/chain metadata.
+
+The envelope applies identically to paywalled posts (tier-derived key) and public posts (fresh random key, `X-Tier-Id: 0`).
+
+---
+
 ### Access grant signing
 
 Access grant declarations are signed by the creator's wallet and stored both locally (instance) and on-chain (`DENAccessGrant`). The signature scheme:
@@ -263,11 +308,12 @@ DENSubscription.setTier(tierId, price, duration, token)
 ```
 `price` in wei, `duration` in seconds, `token` is ERC-20 address or `address(0)` for ETH.
 
-**2. Encrypt content [client]**
+**2. Build the post envelope and encrypt [client]**
 
-This is the paywalled path — the key is tier-derived. For content posted as **public**, substitute a fresh random key (`crypto.getRandomValues(new Uint8Array(32))`) for `tierKey` and use `X-Tier-Id: 0` in step 3; see "Mark content public or private" for why a tier key must never be published.
+`plaintext` is the serialised post envelope — text + images in one blob; see "Post envelope (content plaintext format)". This is the paywalled path — the key is tier-derived. For content posted as **public**, substitute a fresh random key (`crypto.getRandomValues(new Uint8Array(32))`) for `tierKey` and use `X-Tier-Id: 0` in step 3; see "Mark content public or private" for why a tier key must never be published.
 
 ```ts
+const plaintext  = buildEnvelope(text, images);   // src/lib/envelope.ts
 const tierKey    = deriveKey(masterSecret, 'tier:' + tierId);
 const nonce      = crypto.getRandomValues(new Uint8Array(12));
 const aesKey     = await crypto.subtle.importKey('raw', tierKey, { name: 'AES-GCM' }, false, ['encrypt']);
