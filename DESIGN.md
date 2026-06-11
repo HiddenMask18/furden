@@ -100,7 +100,7 @@ A creator is often also a subscriber to other creators. One wallet may hold a cr
 - Posting flow: images and text, with local encryption pipeline and on-chain registration
 - Subscription tier management: create, edit (on-chain)
 - Access grant management: create, update (on-chain + instance)
-- Content library: list, manage visibility, delete
+- Content library: list, manage visibility, delete — a visibility change is a re-encryption pipeline action (new blob, new fingerprint, chain registration; see PROTOCOL.md), not a metadata flip, and the UI presents it with that weight
 - Emergency wallet registration (surfaced in settings, not buried — the protocol strongly recommends it)
 - Session management: in-memory token, auto-reconnect on page refresh
 
@@ -258,7 +258,7 @@ After on-chain confirmation:
 
 ### Flow 2: Creator Onboarding
 
-**Entry:** `/onboard`, or triggered automatically when a connected wallet has no registered creator identity
+**Entry:** `/onboard`, or via redirect when a session that has not completed creator setup on this instance (`isCreator: false` — no operational blob uploaded) hits a studio route
 
 Single-page wizard with a progress bar and step count. Back navigation is allowed on all steps except steps that have already submitted chain transactions. No other navigation chrome visible — this is a focus moment.
 
@@ -311,7 +311,7 @@ Shown only if the app is deployed without a fixed `VITE_INSTANCE_URL`, or if the
 
 If shown: input field for instance URL, verify button (checks connectivity and fetches blob pubkey), confirmation of instance name.
 
-After this step: `DENIdentityImpl.setInstanceUrl(instanceUrl)` chain tx, same three-step progress pattern.
+After this step: fetch the instance countersignature (`GET /creator/url-signature`), then the `DENIdentityImpl.updateInstanceURL(url, receivingInstanceProxy, instanceSig)` chain tx, same three-step progress pattern. The countersignature fetch is invisible to the user — it is part of preparing the transaction.
 
 ---
 

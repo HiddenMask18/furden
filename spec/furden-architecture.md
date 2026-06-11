@@ -38,7 +38,7 @@ These constraints flow directly from the DEN protocol and cannot be negotiated b
 
 **Master secret** — the 32-byte secret generated during creator onboarding via `crypto.getRandomValues(new Uint8Array(32))`. Root of all content key derivation. Held in memory in the crypto Zustand store during an active creator session. Cleared on disconnect. Never transmitted in plaintext, never written to storage.
 
-**Content key** — a 32-byte AES-256-GCM key derived from the master secret via `HKDF-SHA256(ikm=masterSecret, salt=none, info=path)`. Unique per tier derivation path (e.g. `"tier:1"`). For subscribers: returned by the instance at `POST /access/key` — the instance derives the key server-side. For creators making content public: derived client-side to supply the `contentKey` field.
+**Content key** — a 32-byte AES-256-GCM key. For paywalled content: derived from the master secret via `HKDF-SHA256(ikm=masterSecret, salt=none, info=path)`, unique per tier derivation path (e.g. `"tier:1"`); subscribers receive it from `POST /access/key` — the instance derives it server-side. For public content: a **fresh random per-post key** (`crypto.getRandomValues`), supplied as the `contentKey` field and published in the profile. Derived keys are never published — a tier key as a public `contentKey` would unlock the entire tier for anyone (see Appendix A, "Public content keys").
 
 **Fingerprint** — the SHA-256 hash of a content blob's ciphertext bytes, computed server-side by the instance after upload (`POST /creator/content`). The client does not know the fingerprint before the upload completes. On-chain registration (`DENContentRegistry.registerContent`) requires the fingerprint returned by the upload response.
 
@@ -292,7 +292,7 @@ type SessionStore = {
   token:         string | null   // bearer token for instance API calls
   proxy:         Address | null  // creator's stable DEN identity address
   walletAddress: Address | null  // connected wallet address (for signing)
-  isCreator:     boolean         // true if proxy has a registered DEN identity
+  isCreator:     boolean         // true if creator setup is complete on the configured instance
   setSession:    (token: string, proxy: Address, walletAddress: Address) => void
   setIsCreator:  (v: boolean) => void
   clearSession:  () => void
@@ -301,7 +301,7 @@ type SessionStore = {
 
 `clearSession` is called on wallet disconnect and on any 401 response from the instance. It sets all fields to null/false. The UI transitions to unauthenticated state immediately — no pending requests are aborted; they will fail with the next API call and surface the reconnect banner.
 
-`isCreator` is derived from an on-chain read (`DENIdentityRegistry.isRegistered(walletAddress)`) after session establishment. It is not derived from the session token, which only authenticates the wallet — it does not imply a registered creator identity.
+`isCreator` is derived from `GET /creator/blob` → `{ exists }` on the configured instance after session establishment. It cannot be derived from `DENIdentityRegistry.isRegistered()` — every participant registers, subscribers included, and authentication already requires registration, so that read is true for every session. The signal that distinguishes a creator is having completed creator setup on this instance: the operational blob exists. A creator hosted on a *different* instance reads as `isCreator: false` here, which is correct — the studio manages content on the configured instance, and that creator's studio lives on their home instance. See Appendix A, "isCreator — operational blob existence."
 
 **Subscriber registration.** Every participant — creators and subscribers alike — must call `DENIdentityRegistry.register()` before they can authenticate with any instance. The instance's `POST /auth/verify` checks `isRegistered()` and returns 401 for unregistered wallets. Subscribers who attempt to authenticate without registering will not receive a session token. The subscriber onboarding flow must include the `register()` call as a prerequisite to the subscription flow, with the same three-step transaction progress component used elsewhere. The `proxy` returned from auth is always a valid registered proxy — there is no null proxy case for an authenticated session.
 
@@ -393,7 +393,7 @@ wagmi's `useAccount` resolves immediately from its persisted connection state (w
 - Show wallet signature prompt: "Sign in to your DEN session"
 - On signature: `POST /auth/verify { wallet, nonce, signature }`
 - On success: call `setSession(token, proxy, walletAddress)` on `useSessionStore`
-- Fire `DENIdentityRegistry.isRegistered(walletAddress)` read to set `isCreator`
+- Fire `GET /creator/blob` to set `isCreator` (operational blob exists on this instance — see Section 4)
 - UI resolves to authenticated state
 
 This sequence runs in a root-level component effect on first mount. It is not blocking — public routes render immediately; authenticated routes show a loading state until the session resolves.
@@ -516,7 +516,7 @@ src/routes/
 
 The creator guard is placed on `studio/__layout.tsx`. All routes nested under `studio/` inherit it. A creator who is also a subscriber accesses studio routes via `/studio` — they do not need a separate account. The studio layout is visually distinct from the public/subscriber layout (side rail vs. top bar) as specified in DESIGN.md.
 
-**`$handle` route resolution:** The `$handle` route param is the creator's handle or proxy address. On load, `GET /profile/:handle` is called, which returns the proxy address. All subsequent operations on the profile use the proxy address, not the handle. If the handle is already a proxy address (`0x...`), the API handles it identically.
+**`$handle` route resolution:** The `$handle` route param is the creator's handle or proxy address. The instance's `GET /profile/:proxy` accepts **only** proxy addresses (400 otherwise) — handle resolution is an on-chain read, not an instance call. On load: if the param matches `/^0x[0-9a-fA-F]{40}$/` it is used as the proxy directly; otherwise resolve it via `DENIdentityRegistry.resolve(handle)` (a zero-address result is the not-found case). Then call `GET /profile/:proxy` with the resolved address. All subsequent operations on the profile use the proxy address, not the handle. Alias retention for changed handles is the contract's concern — `resolve` honours the `handle_alias_retention_window` governance parameter on-chain.
 
 ---
 
@@ -669,7 +669,7 @@ Monospace is used for proxy addresses, fingerprints, transaction hashes, and any
 
 ### Content key request and cache policy
 
-When a subscriber loads a creator's profile or feed, content keys are requested at the tier level, not per-post. A single `POST /access/key` call returns all keys for all tiers the subscriber is entitled to. One request per creator per session is the target, not one request per content item.
+When a subscriber loads a creator's profile or feed, content keys are requested at the tier level, not per-post. One `POST /access/key` call covers one `(creator, tier)` pair — body `{ type: "subscription", creatorProxy, tierId }` — and the response, `{ keys: { "tier:1": "0x...", ... } }`, contains a key for **every derivation path that tier's access grant covers**. A higher tier whose grant includes lower-tier paths (e.g. tier 2 granting `["tier:1", "tier:2"]`) returns all of those keys in one call; every returned path is written to the cache, not just the requested tier. The target is one request per subscribed `(creator, tier)` per session, not one request per content item.
 
 **Request timing:** Keys are requested after session establishment and before the content feed renders. If the key request fails (subscription lapsed, instance error), the feed renders in locked state — all paywalled cards show the locked overlay. A retry mechanism is available; the user is not left on a blank screen.
 
@@ -677,7 +677,9 @@ When a subscriber loads a creator's profile or feed, content keys are requested 
 
 **Cache invalidation:** None within a session. The cache is cleared on session end (disconnect, page refresh). A subscription that lapses mid-session is handled by the key request failure path at next access, not by proactive cache expiry.
 
-**Public content:** Public content posts include the `contentKey` directly in the `GET /profile/:proxy` response. These keys are stored in the content key cache using the same shape but keyed by fingerprint rather than tier, since public content is per-post.
+**Public content:** Public content posts include the `contentKey` directly in the `GET /profile/:proxy` response. These keys are stored in the content key cache using the same shape but keyed by fingerprint rather than tier, since public content is per-post — each public post carries its own random key by construction (Appendix A, "Public content keys").
+
+**Visibility changes are re-encryption events.** A blob's key cannot be swapped after the fact, so toggling a post between paywalled and public means: re-encrypt the plaintext with the appropriate key (fresh random for public, tier key for paywalled), upload (new fingerprint), register on-chain, then delete the old row and archive the old fingerprint. The content library's visibility control is therefore a pipeline action with chain transactions, not a metadata flip — and going private again is presented honestly: the old key was published, so what was public stays disclosed.
 
 ### Decryption pipeline
 
@@ -705,11 +707,14 @@ Three sequential phases with explicit state transitions in `usePipelineStore`.
 
 For each file:
 ```
-tierKey = HKDF-SHA256(masterSecret, "tier:" + tierId)
-nonce   = crypto.getRandomValues(12 bytes)
-ct      = AES-256-GCM.encrypt(tierKey, nonce, plaintext)
-blob    = concat(nonce, ct)
+key   = HKDF-SHA256(masterSecret, "tier:" + tierId)   // paywalled: tier-derived
+      | crypto.getRandomValues(32 bytes)              // public: fresh random per-post key
+nonce = crypto.getRandomValues(12 bytes)
+ct    = AES-256-GCM.encrypt(key, nonce, plaintext)
+blob  = concat(nonce, ct)
 ```
+
+Public posts are never encrypted with a derived key — the key is published in the profile, and a published tier key would unlock the whole tier (Appendix A, "Public content keys"). Public posts upload with `X-Tier-Id: 0` (reserved; real tiers number from 1) and supply the random key to the visibility endpoint after registration.
 
 All encryption runs on the main thread in v1. Web Worker extraction is a v1.x improvement — the pipeline store's `Map<filename, Uint8Array>` shape is designed to transfer cleanly to a Worker via `Transferable` when the time comes.
 
@@ -768,7 +773,7 @@ On completion: `usePipelineStore.clear()` is called. The encrypted blobs are rel
 
 **Expiry is read live, not trusted from the event.** The `expiresAt` in a `Subscribed` log is correct as of the moment of that subscription, but the authoritative current expiry is whatever `DENSubscription.getSubscriptionExpiry(subscriberProxy, creatorProxy, tierId)` returns now. `/subscriptions` uses events for discovery (which subscriptions exist) and a contract read per subscription for current state — active / expiring soon / expired, and the renewal date. This mirrors the instance's own philosophy: on-chain is the authority, and access-relevant state is never cached past the moment it matters.
 
-**Creator → instance resolution and the single-instance boundary.** Each `creatorProxy` resolves to a home instance URL recorded on-chain (`DENIdentityImpl.setInstanceUrl`, read via the current value or the `InstanceURLUpdated` event). furden routes every per-creator operation — profile fetch, content listing, key request, ciphertext download — to the creator's resolved instance URL, not to a single global base URL.
+**Creator → instance resolution and the single-instance boundary.** Each `creatorProxy` resolves to a home instance URL recorded on-chain — read `instanceURL()` at the proxy address. It is written by `DENIdentityImpl.updateInstanceURL(url, receivingInstanceProxy, instanceSig)`, which requires a countersignature from the receiving instance's primary wallet; the client fetches it from `GET /creator/url-signature` during creator onboarding (PROTOCOL.md step 7). furden routes every per-creator operation — profile fetch, content listing, key request, ciphertext download — to the creator's resolved instance URL, not to a single global base URL.
 
 In v1, furden renders content only for creators whose resolved instance URL equals `VITE_INSTANCE_URL`. A subscription to a creator hosted elsewhere is **not** an error and never produces a broken-subscription screen. On `/subscriptions` it renders as an honest link-out — "Hosted on another DEN site → Open" — linking to that creator's instance. This is the single-instance scope decision (Appendix A; DESIGN.md) made concrete.
 
@@ -894,6 +899,18 @@ Tier pricing carries only a token contract address. furden renders human amounts
 
 There is no `/explore` route in v1. The instance exposes no discovery API (no creator listing, no trending query), so a browse surface cannot be backed by instance queries (consistent with "Static landing page for `/`" above). `/` is the static landing page and the header carries no Explore link. The DESIGN.md IA route structure and nav model are reconciled to match — their earlier "Browse creators" / "Discover — trending creators" wording was stale relative to the resolved decision. A curated or community-maintained browse surface, if wanted, is a later addition and does not block v1.
 
+**isCreator — operational blob existence, not registry registration**
+
+`isCreator` is set from `GET /creator/blob` → `{ exists }` on the configured instance after session establishment. The rejected derivation was `DENIdentityRegistry.isRegistered(walletAddress)`: registration is universal — subscribers must register before they can authenticate at all — so that read is true for every authenticated session and gates nothing. Operational-blob existence is the protocol's own definition of "creator setup complete on this instance": it is what key delivery requires (`POST /access/key` returns 503 without it), it flips true at exactly the onboarding step where the studio becomes usable, and it is instance-scoped — a creator hosted elsewhere correctly reads `false` here, because their studio lives on their home instance. Resolved 2026-06-11.
+
+**Shop / one-time purchases — out of scope for v1**
+
+The protocol and instance already carry one-time purchase support (`DENPurchaseState`, `POST /access/key` with `type: "purchase"`, `"item:<id>"` derivation paths). furden v1 implements subscriptions only; no listing management in the studio, no purchase flow, no `item:` key requests. The contract surface is stable, so adding the shop in v1.x is additive client work, not a protocol change. Recorded 2026-06-11 so the omission reads as a decision, not an oversight.
+
+**Public content keys — fresh random per-post key, never tier-derived**
+
+The `contentKey` published for a public post is a fresh random 32-byte key generated at encryption time. The rejected (and previously documented) alternative — supplying `deriveKey(masterSecret, "tier:" + tierId)` — is a tier-wide confidentiality break: registration is permissionless, `GET /content/:fingerprint` serves private ciphertext on authentication alone, and paywalled fingerprints are enumerable from on-chain `ContentRegistered` events, so one public post would hand every authenticated participant the key to all of that tier's paywalled content, permanently. The instance stores whatever key it is given and cannot verify derivation — the discipline is the client's. Consequences accepted with the decision: public posts upload under reserved `X-Tier-Id: 0` (real tiers number from 1), and visibility toggles are re-encryption events (new blob, new fingerprint, new registration) rather than metadata flips, with honest copy that returning a post to paywalled does not un-publish what was public. No instance or contract change required. Resolved 2026-06-11.
+
 **Portability-blob recovery — emergency wallet is the path, copy stays honest**
 
 Onboarding presents the **emergency wallet** as the recovery path — the protocol-native mechanism: a second registered wallet receives its own emergency portability blob, decryptable by that wallet. Onboarding does **not** promise one-click in-app key recovery, because in-browser decryption of a portability blob needs a private key an injected wallet never exposes (PROTOCOL.md onboarding step 5). The copy states plainly that registering an emergency wallet is the backup path and that fuller recovery/migration tooling arrives in v1.x. Rejected as the sole answer: a seed-phrase backup prompt — that conflates wallet custody (the wallet's own responsibility) with DEN key recovery; onboarding may still remind users their wallet is their key, as DESIGN.md Flow 2 Step 1 already does, but that is not a substitute for the emergency-wallet path.
@@ -902,7 +919,15 @@ Onboarding presents the **emergency wallet** as the recovery path — the protoc
 
 ## Appendix B — Open Questions
 
-No open questions. The items opened on 2026-06-06 (after cross-checking the spec against the implemented instance API) were resolved the same day and recorded in Appendix A. This section is intentionally empty — and the way to keep it honest is to reopen it explicitly the moment a new gap is found, rather than leaving a known gap unrecorded. The earlier blanket "no open questions" claim was wrong precisely because gaps existed and were not listed here.
+Reopened 2026-06-11. A second audit against the instance source and the contracts surfaced one unresolved design decision. (The other findings from that audit — the missing instance countersignature endpoint, the `isCreator` derivation, `$handle` resolution, the `POST /access/key` wording, and the PROTOCOL.md contract-table signatures — were fixed the same day; see Appendix A and PROTOCOL.md.)
+
+**1. Post plaintext envelope format.** DESIGN's composer produces a *post*: text + one or more images + warnings, with a single fingerprint and a "Copy link to post" action. The protocol has no post concept — one upload is one opaque ciphertext blob, one fingerprint, one `registerContent` transaction, and the governance size/rate limits apply per blob. Nothing yet defines how a post serialises into plaintext before encryption.
+
+Leading direction: **one post = one blob**, containing a binary envelope (length-prefixed or CBOR — not JSON-with-base64, which inflates image bytes ~33%) holding the text, the image bytes, and an image count/manifest. This gives one fingerprint per post (post identity and permalinks fall out for free), one wallet confirmation per post, one rate-limit unit per post, and atomic publish.
+
+On per-file limits and file-count differentiation under this model: **the instance cannot and should not enforce them.** The blob is E2EE ciphertext — the hoster cannot see how many files are inside or how large each is, and that opacity is a feature (file count and per-image sizes are metadata the hoster has no need to learn). The hoster's only legitimate constraint is total stored bytes, which `POST /creator/content` already enforces per blob — and with an envelope, "per blob" and "per post" coincide, which is exactly what the governance parameter is named (`post_size_limits`) and what DESIGN's composer copy already says ("up to X MB per post"). Per-file caps and a max-images-per-post number are therefore *client-side composer policy* (UX sanity, decode memory, decrypt latency), not protocol rules: the composer budgets total plaintext size against the tier limit (encryption overhead is a fixed 28 bytes), shows total-vs-limit as DESIGN specifies, and applies its own image-count cap.
+
+Costs to weigh before resolving: a post renders only after the whole blob downloads and decrypts (no per-image lazy loading or thumbnails — a 20 MB post fetches 20 MB to show its first pixel), and editing/removing one image means a new blob, new fingerprint, new registration. Resolve before implementing the composer or feed card; blocked on nothing but the decision itself. Needs a "content plaintext format" section in PROTOCOL.md, a §8 pipeline update (the pipeline store currently holds a `Map` of encrypted blobs but a singular `fingerprint` — the envelope model collapses this to one blob), and a post-permalink route in §6 if "Copy link to post" stays. Note for the permalink: den-spec §6.4 requires shareable links to use the `den://[handle]` / `den://[identity-contract-address]` form, never an instance-specific URL — the copy action must emit that form (with whatever web fallback the route layer provides).
 
 ---
 

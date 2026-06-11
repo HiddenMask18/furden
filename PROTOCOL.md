@@ -90,7 +90,9 @@ Subscription tier : "tier:" + tierId      (e.g. "tier:1")
 Shop item / pack  : "item:" + listingId   (e.g. "item:42")
 ```
 
-The subscriber does not run this derivation — the instance does it server-side using the operational blob and returns the derived keys at `POST /access/key`. The creator runs this derivation client-side when marking content public (`PUT /creator/content/:fingerprint/visibility`) to supply the `contentKey`.
+The subscriber does not run this derivation — the instance does it server-side using the operational blob and returns the derived keys at `POST /access/key`.
+
+**Derived keys are never published.** A derivation-path key (`tier:N`, `item:N`) decrypts *every* blob encrypted under that path, and private ciphertext is downloadable by any authenticated participant (registration is permissionless). Publishing a tier key — for example as the `contentKey` of a public post — would therefore unlock the entire tier for everyone, permanently. Public content uses a fresh random per-post key instead; see "Mark content public or private" below.
 
 ---
 
@@ -238,11 +240,18 @@ GET /creator/portability-blob
 → <raw bytes, Content-Type: application/octet-stream>
 ```
 
-**7. Set instance URL on-chain [chain]** *(if not already set)*
+**7. Set instance URL on-chain [instance + chain]** *(if not already set)*
+
+A non-empty instance URL requires a countersignature from the receiving instance's primary wallet — the instance's on-chain confirmation that it hosts this creator. Fetch it, then pass all three values through to the contract:
+
 ```
-DENIdentityImpl.setInstanceUrl(instanceUrl)
+GET /creator/url-signature
+→ { url, receivingInstanceProxy, instanceSig, nonce }
+
+DENIdentityImpl.updateInstanceURL(url, receivingInstanceProxy, instanceSig)
 ```
-Called from the creator's proxy's registered wallet. Required for client-side routing — compliant clients resolve creator identity via the on-chain instance URL record.
+
+Called from the creator's proxy's registered wallet (the proxy address is the contract address). The signature covers `keccak256(abi.encode("DEN-url-confirm", creatorProxy, url, urlUpdateNonce))` as an EIP-191 personal message and commits to the proxy's current `urlUpdateNonce`, so it is valid for exactly one call — re-fetch if the transaction is not sent promptly after another URL update. Required for client-side routing — compliant clients resolve creator identity via the on-chain instance URL record.
 
 ---
 
@@ -255,6 +264,9 @@ DENSubscription.setTier(tierId, price, duration, token)
 `price` in wei, `duration` in seconds, `token` is ERC-20 address or `address(0)` for ETH.
 
 **2. Encrypt content [client]**
+
+This is the paywalled path — the key is tier-derived. For content posted as **public**, substitute a fresh random key (`crypto.getRandomValues(new Uint8Array(32))`) for `tierKey` and use `X-Tier-Id: 0` in step 3; see "Mark content public or private" for why a tier key must never be published.
+
 ```ts
 const tierKey    = deriveKey(masterSecret, 'tier:' + tierId);
 const nonce      = crypto.getRandomValues(new Uint8Array(12));
@@ -327,7 +339,7 @@ Body: { bio: "..." }   // pass null to clear
 
 **Mark content public or private [instance + client]**
 
-Public content is served without a subscription — the content key is included in `GET /profile/:proxy` so any client can decrypt it. When marking content public, the creator derives the content key from their master secret and supplies it.
+Public content is served without a subscription — the content key is included in `GET /profile/:proxy` so any client can decrypt it.
 
 ```
 PUT /creator/content/:fingerprint/visibility
@@ -336,7 +348,14 @@ Body: { isPublic: true,  contentKey: "0x<64 hex chars>" }
 → { stored: true }
 ```
 
-`contentKey` is `deriveKey(masterSecret, "tier:" + tierId)` — the same 32-byte AES-256-GCM key derived from the master secret for that tier. Making content public is the creator choosing to share that derivation output openly. Passing `isPublic: false` clears the stored key and removes public access.
+`contentKey` **MUST be a fresh random per-post key** (`crypto.getRandomValues(new Uint8Array(32))`), generated when the content is encrypted for public posting. It MUST NOT be a derivation-path key: publishing `deriveKey(masterSecret, "tier:" + tierId)` would unlock every post in that tier for any authenticated participant, since private ciphertext is served on auth alone and paywalled fingerprints are enumerable on-chain (`ContentRegistered` events). The instance stores whatever key it is given — derivation discipline is the client's responsibility.
+
+**Posting as public from the start:** encrypt with a fresh random key, upload with `X-Tier-Id: 0` (the no-tier convention for content that is not tier-gated; the header is mandatory), then mark public with that key. Tier ID `0` is reserved for this — compliant clients number real subscription tiers from `1` and never call `setTier` with `0`.
+
+**Visibility changes are re-encryption events**, because the key a blob was encrypted with cannot be swapped after the fact:
+
+- *Paywalled → public:* re-encrypt the plaintext with a fresh random key, upload (new fingerprint), register the new fingerprint on-chain, mark it public, then delete the old row (`DELETE /creator/content/:fingerprint`) and archive the old fingerprint (`DENContentRegistry.archiveContent`).
+- *Public → paywalled:* the same flow in reverse — re-encrypt with the tier key, upload, register, then remove the public row. `isPublic: false` alone only clears the stored key; the old key was already published, so the old ciphertext must be treated as permanently disclosed. Clients must present this honestly: making a post private again protects nothing that was public before.
 
 ---
 
@@ -368,10 +387,10 @@ GET /profile/:proxy
 
 **1. Subscribe on-chain [chain]**
 ```
-DENSubscription.subscribe(creatorProxy, tierId, token, amount)
+DENSubscription.subscribe(creatorProxy, tierId)   // payable
 ```
 
-For ERC-20 tokens, approve `DENSubscription` for `amount` first. For ETH, pass `address(0)` as token and send value with the call.
+The token and price come from the tier definition (`TierSet` / `getTierToken`), not from the call. For ERC-20 tiers, `approve` `DENSubscription` for the tier price first and send no value. For ETH tiers (`token == address(0)`), send the tier price as `msg.value`.
 
 **2. Authenticate with the instance [instance]**
 
@@ -489,11 +508,18 @@ Body: { operationalBlob: "0x<re-encrypted>", portabilityBlob: "0x..." }
 
 Key delivery (`POST /access/key`) will not work until this step completes. Do not announce the migration on-chain until this step succeeds.
 
-**6. Update the on-chain instance URL [chain]**
+**6. Update the on-chain instance URL [instance + chain]**
+
+The migration announcement IS the URL update — there is no separate announce call. The **new** instance countersigns its own URL (it must have `INSTANCE_PUBLIC_URL` configured and a registered operator wallet):
+
 ```
-DENIdentityImpl.setInstanceUrl(newInstanceUrl)
-DENIdentityImpl.announceInstanceMigration(newInstanceUrl, operatorCounterSignature)
+GET <newInstance>/creator/url-signature
+→ { url, receivingInstanceProxy, instanceSig, nonce }
+
+DENIdentityImpl.updateInstanceURL(url, receivingInstanceProxy, instanceSig)
 ```
+
+This is the same flow as onboarding step 7, pointed at the new instance. Once the transaction confirms, compliant clients resolve this creator to the new instance.
 
 **7. Re-upload content ciphertext**
 
@@ -610,12 +636,12 @@ All contracts are on Base (mainnet) / Base Sepolia (testnet). Addresses are prot
 
 | Contract | Key client calls |
 |---|---|
-| `DENIdentityRegistry` | `register()`, `isRegistered(wallet)`, `getProxy(wallet)`, `handleOf(proxy)` |
-| `DENIdentityImpl` (via proxy) | `setInstanceUrl(url)`, `addEmergencyWallet(wallet)`, `initiateCleanRotation(...)`, `initiateCompromiseRotation(newWallet)`, `announceInstanceMigration(url, sig)` |
-| `DENSubscription` | `setTier(tierId, price, duration, token)`, `subscribe(creatorProxy, tierId, token, amount)` |
+| `DENIdentityRegistry` | `register()`, `isRegistered(wallet)`, `getProxy(wallet)`, `handleOf(proxy)`, `resolve(handle)` |
+| `DENIdentityImpl` (call at the proxy address) | `updateInstanceURL(url, receivingInstanceProxy, instanceSig)`, `registerEmergencyWallet(wallet)`, `initiateCleanRotation(newWallet, newWalletSig)`, `initiateCompromiseRotation(newWallet)`, `instanceURL()`, `urlUpdateNonce()` |
+| `DENSubscription` | `setTier(tierId, price, duration, token)`, `subscribe(creatorProxy, tierId)` — payable; send `msg.value` for ETH tiers, ERC-20 tiers require `approve` on the token first |
 | `DENContentRegistry` | `registerContent(fingerprint, tierId)` |
 | `DENAccessGrant` | `publishGrant(tierId, paths, signature)` |
-| `DENPurchaseState` | `purchase(creatorProxy, listingId, token, amount)` |
+| `DENPurchaseState` | `purchase(creatorProxy, listingId)` — payable, same token pattern as `subscribe` (v1.x, shop) |
 | `DENReportRegistry` | `fileReport(contentProxy, fingerprint, violationType, evidenceHash)` |
 
 ABIs are in `den-protocol/abis.ts` — the single source of truth for both the instance and furden. Import from there rather than writing from scratch.
