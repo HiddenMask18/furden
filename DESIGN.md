@@ -546,7 +546,7 @@ All UX decisions are resolved. Decisions recorded here for reference; rationale 
 | Subscription renewal detection | **All three combined:** on page load, on feed load, and on key request failure. Complementary signals, not alternatives. |
 | Error copy voice | **Manifesto voice throughout.** Direct, first-person, no corporate hedging. Consistency across the app is the priority. |
 | Accent colour | **`#8b5cf6` (violet) provisional.** Token in place. Value confirmed or updated at visual review before v1 ship. |
-| Subscription price display | **Native token amount always; approximate USD ("~$5") layered on as a helper** from a public price API, omitted silently on failure. The on-chain token amount is the source of truth and the actual charge — USD is comprehension only, never implies a fiat charge. |
+| Subscription price display | **Native token amount always; approximate USD ("~$5") layered on as a helper** from **Chainlink price feeds on Base** (decentralized, per den-spec §3.5 — no centralized price API). Tokens with no Chainlink feed show no fiat figure (omitted silently, no fallback). The on-chain token amount is the source of truth and the actual charge — USD is comprehension only, never implies a fiat charge. |
 | Creator avatars | **Deterministic identicon from the proxy address (v1).** Zero infrastructure, always present. Custom avatar/profile-image upload is out of scope (v1.x — needs an instance storage endpoint). |
 | Instance display name | **`VITE_INSTANCE_NAME` env var,** falling back to the `VITE_INSTANCE_URL` hostname if unset. No instance metadata endpoint in v1. |
 | Token price rendering | **On-chain ERC-20 `symbol()`/`decimals()` reads** (viem), cached per token; `address(0)` renders as ETH. No hardcoded token allowlist. |

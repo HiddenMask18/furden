@@ -1,0 +1,96 @@
+/*
+ * furden design tokens — furden-architecture.md §7
+ * These custom properties are the ONLY values that may appear in CSS Module files.
+ * No hardcoded colours, spacing, or type sizes in component stylesheets.
+ */
+:root {
+  /* --- Backgrounds --- */
+  --color-bg: #0f0f0f; /* base background — near black */
+  --color-surface: #181818; /* cards, panels */
+  --color-surface-raised: #222222; /* modals, dropdowns, popovers */
+  --color-surface-overlay: #2a2a2a; /* hover states on surface */
+
+  /* --- Text --- */
+  --color-text-primary: #f0f0f0; /* body copy, headings */
+  --color-text-secondary: #a0a0a0; /* metadata, secondary labels */
+  --color-text-tertiary: #5a5a5a; /* timestamps, captions, disabled states */
+  --color-text-inverse: #0f0f0f; /* text on accent background */
+
+  /* --- Borders --- */
+  --color-border: #282828; /* default dividers */
+  --color-border-strong: #383838; /* stronger separators */
+  --color-border-focus: var(--color-accent); /* focus rings */
+
+  /* --- Accent (single — primary actions and active states only) --- */
+  --color-accent: #8b5cf6; /* violet — PROVISIONAL, confirm before v1 */
+  --color-accent-hover: #7c3aed;
+  --color-accent-subtle: #1e1433; /* accent-tinted surface for active states */
+
+  /* --- Feedback --- */
+  --color-error: #f87171;
+  --color-error-subtle: #2d1515;
+  --color-success: #4ade80;
+  --color-success-subtle: #0f2a1a;
+  --color-warning: #fbbf24;
+
+  /* --- Chain indicator --- */
+  --color-chain-mainnet: var(--color-accent); /* accent = mainnet = real money */
+  --color-chain-testnet: #f59e0b; /* amber = testnet = not real */
+  --color-chain-dev: #6b7280; /* grey = local dev */
+
+  /* --- Spacing scale (4px base) --- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+
+  /* --- Font stacks --- */
+  --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica,
+    Arial, sans-serif;
+  --font-mono: 'SFMono-Regular', 'SF Mono', 'Cascadia Code', 'Fira Code',
+    'JetBrains Mono', 'Consolas', monospace;
+
+  /* --- Type scale --- */
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 30px;
+  --text-4xl: 36px;
+
+  /* --- Line heights --- */
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.625;
+
+  /* --- Font weights --- */
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* --- Border radius --- */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+  /* --- Z-index scale --- */
+  --z-base: 0;
+  --z-raised: 10; /* sticky headers, floating labels */
+  --z-dropdown: 20; /* dropdowns, popovers */
+  --z-modal: 30; /* dialogs, tier selection modal */
+  --z-overlay: 40; /* transaction progress overlay */
+  --z-toast: 50; /* session banners, error toasts */
+}

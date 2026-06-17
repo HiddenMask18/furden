@@ -59,7 +59,26 @@ These are determined by the protocol's wire format. Changing them produces incom
 
 ## Setup
 
-There is nothing to run yet. When there is, setup instructions will appear here.
+```bash
+pnpm install
+cp .env.example .env   # set VITE_CHAIN_ID and VITE_INSTANCE_URL
+pnpm dev               # http://localhost:5173 — generates src/routeTree.gen.ts on first run
+```
+
+Other scripts:
+
+```bash
+pnpm routes      # regenerate the TanStack route tree from src/routes
+pnpm typecheck   # tsc --noEmit (generates routes first)
+pnpm test        # vitest — pure-module unit tests (envelope codec, …)
+pnpm build       # routes → tsc → vite build (static SPA output)
+```
+
+The app is scaffolded but feature-incomplete: every route renders a placeholder so the route
+tree, auth guards, navigation, stores, and the crypto/envelope libraries are wired and walkable.
+Contract addresses are not yet filled in (`src/lib/chain.ts`), so chain reads throw on Base /
+Base Sepolia until a canonical deployment exists; run against local Anvil with the `VITE_DEV_*`
+overrides in the meantime.
 
 ## Contributing
 
