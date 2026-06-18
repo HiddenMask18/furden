@@ -1,0 +1,9 @@
+# NOT a multi-package workspace — furden is a single package. This file exists only because
+# pnpm 11 moved the build-script approval setting here (out of package.json's "pnpm" field).
+# It approves the native/postinstall build scripts we trust; without it pnpm blocks them and
+# ERR_PNPM_IGNORED_BUILDS fails `pnpm install` and every `pnpm <script>` (deps check runs first).
+allowBuilds:
+  bufferutil: true
+  esbuild: true
+  keccak: true
+  utf-8-validate: true

@@ -36,7 +36,7 @@ function StudioLayout() {
             <Link
               key={item.to}
               to={item.to}
-              activeOptions={{ exact: item.exact ?? false }}
+              activeOptions={{ exact: 'exact' in item ? item.exact : false }}
               activeProps={{ className: styles.active }}
               className={styles.railLink}
             >

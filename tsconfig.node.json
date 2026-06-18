@@ -7,8 +7,11 @@
     "composite": true,
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,
+    "types": ["node"],
     "strict": true,
-    "noEmit": true
+    "emitDeclarationOnly": true,
+    "outDir": "./node_modules/.tmp/tsnode",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsnode.tsbuildinfo"
   },
   "include": ["vite.config.ts"]
 }

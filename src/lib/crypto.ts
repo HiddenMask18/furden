@@ -43,6 +43,11 @@ export function itemPath(listingId: number | string): string {
   return `item:${listingId}`
 }
 
+// Web Crypto types BufferSource over `ArrayBuffer`, but @noble/hashes and TS 5.7's generic
+// Uint8Array yield `Uint8Array<ArrayBufferLike>`. These bytes are always ArrayBuffer-backed at
+// runtime (never SharedArrayBuffer), so narrowing to BufferSource here is sound and copy-free.
+const ab = (b: Uint8Array): BufferSource => b as BufferSource
+
 /**
  * ECIES — encrypt a payload (the master secret) to a recipient secp256k1 public key.
  * Wire format: [ephPub(33)][nonce(12)][ciphertext+tag].
@@ -58,11 +63,11 @@ export async function encryptBlob(
   const aesKeyBytes = hkdf(sha256, rawShared.slice(1), ephPub, BLOB_INFO, 32) // strip prefix byte → x
 
   const nonce = crypto.getRandomValues(new Uint8Array(12))
-  const aesKey = await crypto.subtle.importKey('raw', aesKeyBytes, { name: 'AES-GCM' }, false, [
+  const aesKey = await crypto.subtle.importKey('raw', ab(aesKeyBytes), { name: 'AES-GCM' }, false, [
     'encrypt',
   ])
   const ct = new Uint8Array(
-    await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, aesKey, plaintext),
+    await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, aesKey, ab(plaintext)),
   )
 
   const out = new Uint8Array(33 + 12 + ct.length)
@@ -97,9 +102,9 @@ export async function encryptContent(
   plaintext: Uint8Array,
 ): Promise<Uint8Array> {
   const nonce = crypto.getRandomValues(new Uint8Array(12))
-  const aesKey = await crypto.subtle.importKey('raw', key, { name: 'AES-GCM' }, false, ['encrypt'])
+  const aesKey = await crypto.subtle.importKey('raw', ab(key), { name: 'AES-GCM' }, false, ['encrypt'])
   const ct = new Uint8Array(
-    await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, aesKey, plaintext),
+    await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, aesKey, ab(plaintext)),
   )
   const out = new Uint8Array(12 + ct.length)
   out.set(nonce, 0)
@@ -114,8 +119,10 @@ export async function decryptContent(
 ): Promise<Uint8Array> {
   const nonce = ciphertext.subarray(0, 12)
   const ct = ciphertext.subarray(12)
-  const aesKey = await crypto.subtle.importKey('raw', key, { name: 'AES-GCM' }, false, ['decrypt'])
-  return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce }, aesKey, ct))
+  const aesKey = await crypto.subtle.importKey('raw', ab(key), { name: 'AES-GCM' }, false, ['decrypt'])
+  return new Uint8Array(
+    await crypto.subtle.decrypt({ name: 'AES-GCM', iv: ab(nonce) }, aesKey, ab(ct)),
+  )
 }
 
 /** Hex helpers for moving keys to/from the instance API (0x-prefixed). */

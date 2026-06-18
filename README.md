@@ -59,6 +59,9 @@ These are determined by the protocol's wire format. Changing them produces incom
 
 ## Setup
 
+Requires **Node 20+** and **pnpm 9+**. (Build-script approvals for native deps — esbuild, keccak —
+live in `pnpm-workspace.yaml`; that file is settings-only, furden is not a multi-package workspace.)
+
 ```bash
 pnpm install
 cp .env.example .env   # set VITE_CHAIN_ID and VITE_INSTANCE_URL
@@ -68,17 +71,19 @@ pnpm dev               # http://localhost:5173 — generates src/routeTree.gen.t
 Other scripts:
 
 ```bash
-pnpm routes      # regenerate the TanStack route tree from src/routes
-pnpm typecheck   # tsc --noEmit (generates routes first)
-pnpm test        # vitest — pure-module unit tests (envelope codec, …)
-pnpm build       # routes → tsc → vite build (static SPA output)
+pnpm routes        # regenerate the TanStack route tree from src/routes
+pnpm typecheck     # tsr generate && tsc --noEmit
+pnpm test          # vitest in watch mode (pure-module unit tests — envelope codec, …)
+pnpm test --run    # one-shot run (CI / pre-commit)
+pnpm build         # tsr generate && tsc -b && vite build (static SPA output)
+pnpm preview       # serve the production build locally
 ```
 
-The app is scaffolded but feature-incomplete: every route renders a placeholder so the route
-tree, auth guards, navigation, stores, and the crypto/envelope libraries are wired and walkable.
-Contract addresses are not yet filled in (`src/lib/chain.ts`), so chain reads throw on Base /
-Base Sepolia until a canonical deployment exists; run against local Anvil with the `VITE_DEV_*`
-overrides in the meantime.
+The app is scaffolded and mostly feature-incomplete: wallet connection (`/connect`) is implemented,
+and every other route renders a placeholder so the route tree, auth guards, navigation, stores, and
+the crypto/envelope libraries are wired and walkable. Contract addresses are not yet filled in
+(`src/lib/chain.ts`), so chain reads throw on Base / Base Sepolia until a canonical deployment
+exists; run against local Anvil with the `VITE_DEV_*` overrides in the meantime.
 
 ## Contributing
 

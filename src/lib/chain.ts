@@ -30,8 +30,6 @@ export const anvil = defineChain({
 /** The ETH sentinel used by tier definitions: address(0) means native ETH, not an ERC-20. */
 export const ETH_SENTINEL = '0x0000000000000000000000000000000000000000' as const
 
-const ZERO = '0x0000000000000000000000000000000000000000' as Address
-
 // Populated once canonical deployments exist. Until then getContracts() throws for
 // Base/Sepolia so misconfiguration surfaces at startup, not at the first contract call.
 const ADDRESSES: Record<number, ContractAddresses | null> = {
