@@ -83,7 +83,7 @@ function CreatorProfile() {
   return (
     <section className={styles.root}>
       <header className={styles.head}>
-        <h1 className={styles.name}>{p.handle ?? short(p.proxy)}</h1>
+        <h1 className={styles.name}>{p.handle || short(p.proxy)}</h1>
         <p className={styles.proxy}>{short(p.proxy)}</p>
         {p.bio && <p className={styles.bio}>{p.bio}</p>}
       </header>

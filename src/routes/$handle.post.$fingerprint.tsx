@@ -39,8 +39,9 @@ function PostPermalink() {
   const entry = p?.publicContent.find((c) => c.fingerprint === fingerprint)
   const warned = p?.contentWarnings.find((c) => c.fingerprint === fingerprint)
 
-  // den-spec §6.4: shareable links use the handle form, never an instance URL.
-  const denLink = `den://${p?.handle ?? handle}/post/${fingerprint}`
+  // den-spec §6.4: shareable links use the handle form, never an instance URL. A creator with no
+  // handle (the instance returns an empty string, not null) falls back to the proxy/param identifier.
+  const denLink = `den://${p?.handle || handle}/post/${fingerprint}`
   async function copy() {
     await navigator.clipboard.writeText(denLink)
     setCopied(true)
@@ -50,7 +51,7 @@ function PostPermalink() {
   return (
     <section className={styles.root}>
       <Link to="/$handle" params={{ handle }} className={styles.backLink}>
-        ← {p?.handle ?? (proxy ? short(proxy) : handle)}
+        ← {p?.handle || (proxy ? short(proxy) : handle)}
       </Link>
 
       {resolveQuery.isPending || profileQuery.isPending ? (

@@ -13,7 +13,7 @@
 import { keccak256, encodeAbiParameters, type Address } from 'viem'
 import { readContract, writeContract, waitForTransactionReceipt } from 'wagmi/actions'
 import { wagmiConfig } from './wagmi'
-import { creator as creatorApi } from './api'
+import { creator as creatorApi, ApiError } from './api'
 import { randomContentKey, deriveKey, tierPath, encryptContent, keyToHex } from './crypto'
 import { buildEnvelope, GCM_OVERHEAD, type EnvelopeImage } from './envelope'
 import { contentRegistryAbi, accessGrantAbi } from './abis'
@@ -128,11 +128,22 @@ const GRANT_HASH_PARAMS = [
   { type: 'uint256' },
 ] as const
 
+function pathsEqual(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((p, i) => p === b[i])
+}
+
 /**
- * Phase 3b (paywalled) — ensure the tier's access grant authorises the `tier:N` derivation path,
- * so the instance will release the tier key to subscribers (PROTOCOL.md "Content posting" step 5,
- * §8 Phase 3 sub-step B). No-op when an on-chain grant already covers exactly this path. Otherwise
- * the creator signs the grant struct hash, the instance stores it, and it is published on-chain.
+ * Phase 3b (paywalled) — ensure the tier's access grant authorises the `tier:N` derivation path in
+ * BOTH stores: the instance (which releases the tier key to subscribers) and the on-chain
+ * DENAccessGrant (which the access gate verifies). PROTOCOL.md "Content posting" step 5, §8 Phase 3
+ * sub-step B.
+ *
+ * The grant version is governed by the INSTANCE: POST /creator/grant requires `version` to equal
+ * its stored version + 1 (or 1 when absent), so the version is read from `GET /creator/grant/:tierId`,
+ * not from the chain — otherwise a retry after the instance stored a grant but the chain tx failed
+ * would recompute version 1 forever and deadlock on a 409. The two sides are reconciled
+ * independently so a partial failure on either is recoverable: each is written only if it does not
+ * already hold exactly this grant.
  */
 export async function ensureAccessGrant(
   creatorProxy: Address,
@@ -142,20 +153,30 @@ export async function ensureAccessGrant(
   const paths = [tierPath(tierId)] // e.g. ['tier:1']
   const accessGrant = getContracts(env.chainId).accessGrant
 
-  const existing = await readContract(wagmiConfig, {
+  // Instance state (its version counter governs putGrant).
+  let instanceGrant: { paths: string[]; version: number } | null
+  try {
+    instanceGrant = await creatorApi.getGrant(tierId)
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) instanceGrant = null
+    else throw e
+  }
+  const instanceCovers = !!instanceGrant && pathsEqual(instanceGrant.paths, paths)
+
+  // On-chain state (authoritative for the access gate).
+  const onChain = await readContract(wagmiConfig, {
     address: accessGrant,
     abi: accessGrantAbi,
     functionName: 'getGrant',
     args: [creatorProxy, BigInt(tierId)],
   })
-  const covered =
-    existing.exists &&
-    existing.derivationPaths.length === paths.length &&
-    existing.derivationPaths.every((p, i) => p === paths[i])
-  if (covered) return
+  const onChainCovers = onChain.exists && pathsEqual(onChain.derivationPaths, paths)
 
-  // A path change re-publishes at the next version; a brand-new grant starts at 1.
-  const version = existing.exists ? Number(existing.version) + 1 : 1
+  if (instanceCovers && onChainCovers) return // fully published
+
+  // Reuse the existing version when the instance already holds these paths (we only need to catch
+  // the chain up); a path change bumps to the next version; a brand-new grant starts at 1.
+  const version = instanceGrant ? instanceGrant.version + (instanceCovers ? 0 : 1) : 1
 
   const pathsHash = keccak256(encodeAbiParameters([{ type: 'string[]' }] as const, [paths]))
   const structHash = keccak256(
@@ -169,13 +190,16 @@ export async function ensureAccessGrant(
   )
   const signature = await signRaw({ message: { raw: structHash } })
 
-  // Instance stores its copy, then the grant is published on-chain.
-  await creatorApi.putGrant(String(tierId), paths, signature, version)
-  const hash = await writeContract(wagmiConfig, {
-    address: accessGrant,
-    abi: accessGrantAbi,
-    functionName: 'publishGrant',
-    args: [BigInt(tierId), paths, signature],
-  })
-  await waitForTransactionReceipt(wagmiConfig, { hash })
+  if (!instanceCovers) {
+    await creatorApi.putGrant(String(tierId), paths, signature, version)
+  }
+  if (!onChainCovers) {
+    const hash = await writeContract(wagmiConfig, {
+      address: accessGrant,
+      abi: accessGrantAbi,
+      functionName: 'publishGrant',
+      args: [BigInt(tierId), paths, signature],
+    })
+    await waitForTransactionReceipt(wagmiConfig, { hash })
+  }
 }

@@ -79,11 +79,16 @@ pnpm build         # tsr generate && tsc -b && vite build (static SPA output)
 pnpm preview       # serve the production build locally
 ```
 
-The app is scaffolded and mostly feature-incomplete: wallet connection (`/connect`) is implemented,
-and every other route renders a placeholder so the route tree, auth guards, navigation, stores, and
-the crypto/envelope libraries are wired and walkable. Contract addresses are not yet filled in
-(`src/lib/chain.ts`), so chain reads throw on Base / Base Sepolia until a canonical deployment
-exists; run against local Anvil with the `VITE_DEV_*` overrides in the meantime.
+The core creator→subscriber arc is implemented end-to-end:
+
+- **Wallet & session** — connect (`/connect`) and challenge/verify sign-in.
+- **Creator onboarding** (`/onboard`) — register identity, generate + encrypt the master secret, upload blobs, publish the instance URL.
+- **Composer** (`/studio/post`) — the three-phase pipeline (envelope → encrypt → upload → register), for both public posts and paywalled posts (tier-derived key + access grant).
+- **Tier management** (`/studio/tiers`) — create/update subscription tiers, read back from on-chain `TierSet` events.
+- **Subscribe** — from a creator's tier cards: register (if needed), approve (ERC-20), `subscribe()`.
+- **Reading** — creator profile (`/$handle`), post permalink (`/$handle/post/$fingerprint`), and the subscriber feed (`/feed`) assembled client-side from on-chain `Subscribed` logs, with the §8 decryption pipeline.
+
+The remaining studio screens (dashboard, content library, settings, access grants) and `/subscriptions` still render placeholders. Everything above is compiler-verified but has **not yet been exercised against a live instance** — run it against a local Anvil + instance loop with the `VITE_DEV_*` overrides. Contract addresses are not filled in (`src/lib/chain.ts`), so chain reads throw on Base / Base Sepolia until a canonical deployment exists.
 
 ## Contributing
 
