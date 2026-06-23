@@ -182,8 +182,34 @@
   font-size: var(--text-sm);
 }
 
-.error .primary {
+.errorActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   margin-top: var(--space-4);
+}
+
+.errorActions .primary {
+  margin-top: 0;
+}
+
+.ghost {
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.ghost:hover {
+  color: var(--color-text-secondary);
+}
+
+.warning {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-warning);
+  line-height: var(--leading-normal);
 }
 
 /* --- success state --- */

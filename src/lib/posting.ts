@@ -10,15 +10,30 @@
  * reserved X-Tier-Id: 0, then marked public with that key. The paywalled path (tier-derived key +
  * access grant) lands with tier management.
  */
-import { writeContract, waitForTransactionReceipt } from 'wagmi/actions'
+import { keccak256, encodeAbiParameters, type Address } from 'viem'
+import { readContract, writeContract, waitForTransactionReceipt } from 'wagmi/actions'
 import { wagmiConfig } from './wagmi'
 import { creator as creatorApi } from './api'
-import { randomContentKey, encryptContent, keyToHex } from './crypto'
+import { randomContentKey, deriveKey, tierPath, encryptContent, keyToHex } from './crypto'
 import { buildEnvelope, GCM_OVERHEAD, type EnvelopeImage } from './envelope'
-import { contentRegistryAbi } from './abis'
+import { contentRegistryAbi, accessGrantAbi } from './abis'
 import { getContracts } from './chain'
 import { env } from './env'
 import type { GovernanceParams } from '@/stores/governance'
+
+/** A wallet signer over a pre-hashed message (the access-grant struct hash). */
+type SignRaw = (args: { message: { raw: `0x${string}` } }) => Promise<`0x${string}`>
+
+function assertWithinLimit(plaintextLen: number, maxBytes: number): void {
+  // The only protocol-enforced size constraint is total blob bytes (envelope + GCM overhead).
+  if (plaintextLen + GCM_OVERHEAD > maxBytes) {
+    throw new Error(
+      `This post is ${(plaintextLen / 1_048_576).toFixed(1)} MB, over the ${(
+        maxBytes / 1_048_576
+      ).toFixed(0)} MB limit. Remove an image or shorten the text.`,
+    )
+  }
+}
 
 /** Reserved tier id for content that is not tier-gated (PROTOCOL.md). */
 export const PUBLIC_TIER_ID = 0
@@ -54,17 +69,29 @@ export async function buildPublicCiphertext(
   maxBytes: number,
 ): Promise<{ ciphertext: Uint8Array; key: Uint8Array }> {
   const plaintext = buildEnvelope(text, images)
-  // The only protocol-enforced size constraint is total blob bytes (envelope + GCM overhead).
-  if (plaintext.length + GCM_OVERHEAD > maxBytes) {
-    throw new Error(
-      `This post is ${(plaintext.length / 1_048_576).toFixed(1)} MB, over the ${(
-        maxBytes / 1_048_576
-      ).toFixed(0)} MB limit. Remove an image or shorten the text.`,
-    )
-  }
+  assertWithinLimit(plaintext.length, maxBytes)
   const key = randomContentKey()
   const ciphertext = await encryptContent(key, plaintext)
   return { ciphertext, key }
+}
+
+/**
+ * Phase 1 (paywalled) — build the envelope and encrypt with the tier-derived key. No per-post key
+ * is returned: the key is re-derivable from the master secret, and it is NEVER published (a tier
+ * key unlocks the whole tier). Requires the master secret in memory (present only in the session
+ * it was generated — there is no in-browser recovery in v1; PROTOCOL.md step 5 note).
+ */
+export async function buildPaywalledCiphertext(
+  text: string,
+  images: EnvelopeImage[],
+  masterSecret: Uint8Array,
+  tierId: number,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  const plaintext = buildEnvelope(text, images)
+  assertWithinLimit(plaintext.length, maxBytes)
+  const key = deriveKey(masterSecret, tierPath(tierId))
+  return encryptContent(key, plaintext)
 }
 
 /** Phase 2 — upload ciphertext. The instance computes the fingerprint (SHA-256 of the bytes). */
@@ -88,7 +115,67 @@ export async function registerContentOnChain(fingerprint: string, tierId: number
   await waitForTransactionReceipt(wagmiConfig, { hash })
 }
 
-/** Phase 3b — publish the per-post key so any client can decrypt this public post. */
+/** Phase 3b (public) — publish the per-post key so any client can decrypt this public post. */
 export async function markPublic(fingerprint: string, key: Uint8Array): Promise<void> {
   await creatorApi.setVisibility(fingerprint, { isPublic: true, contentKey: keyToHex(key) })
+}
+
+const GRANT_HASH_PARAMS = [
+  { type: 'string' },
+  { type: 'address' },
+  { type: 'uint256' },
+  { type: 'bytes32' },
+  { type: 'uint256' },
+] as const
+
+/**
+ * Phase 3b (paywalled) — ensure the tier's access grant authorises the `tier:N` derivation path,
+ * so the instance will release the tier key to subscribers (PROTOCOL.md "Content posting" step 5,
+ * §8 Phase 3 sub-step B). No-op when an on-chain grant already covers exactly this path. Otherwise
+ * the creator signs the grant struct hash, the instance stores it, and it is published on-chain.
+ */
+export async function ensureAccessGrant(
+  creatorProxy: Address,
+  tierId: number,
+  signRaw: SignRaw,
+): Promise<void> {
+  const paths = [tierPath(tierId)] // e.g. ['tier:1']
+  const accessGrant = getContracts(env.chainId).accessGrant
+
+  const existing = await readContract(wagmiConfig, {
+    address: accessGrant,
+    abi: accessGrantAbi,
+    functionName: 'getGrant',
+    args: [creatorProxy, BigInt(tierId)],
+  })
+  const covered =
+    existing.exists &&
+    existing.derivationPaths.length === paths.length &&
+    existing.derivationPaths.every((p, i) => p === paths[i])
+  if (covered) return
+
+  // A path change re-publishes at the next version; a brand-new grant starts at 1.
+  const version = existing.exists ? Number(existing.version) + 1 : 1
+
+  const pathsHash = keccak256(encodeAbiParameters([{ type: 'string[]' }] as const, [paths]))
+  const structHash = keccak256(
+    encodeAbiParameters(GRANT_HASH_PARAMS, [
+      'DEN-access-grant',
+      creatorProxy,
+      BigInt(tierId),
+      pathsHash,
+      BigInt(version),
+    ]),
+  )
+  const signature = await signRaw({ message: { raw: structHash } })
+
+  // Instance stores its copy, then the grant is published on-chain.
+  await creatorApi.putGrant(String(tierId), paths, signature, version)
+  const hash = await writeContract(wagmiConfig, {
+    address: accessGrant,
+    abi: accessGrantAbi,
+    functionName: 'publishGrant',
+    args: [BigInt(tierId), paths, signature],
+  })
+  await waitForTransactionReceipt(wagmiConfig, { hash })
 }

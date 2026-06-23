@@ -1,30 +1,36 @@
 import { useEffect, useRef, useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
+import { useSignMessage } from 'wagmi'
+import { useQuery } from '@tanstack/react-query'
 import { useGovernanceStore } from '@/stores/governance'
 import { usePipelineStore } from '@/stores/pipeline'
 import { useCryptoStore } from '@/stores/crypto'
 import { useSessionStore } from '@/stores/session'
 import { MAX_IMAGES, type EnvelopeImage } from '@/lib/envelope'
 import { ApiError } from '@/lib/api'
+import { readTiers } from '@/lib/tiers'
 import {
   PUBLIC_TIER_ID,
   postSizeLimit,
   buildPublicCiphertext,
+  buildPaywalledCiphertext,
   uploadPost,
   registerContentOnChain,
   markPublic,
+  ensureAccessGrant,
 } from '@/lib/posting'
 import styles from './post.module.css'
 
 // `/studio/post` — composer. buildEnvelope(text, images) → encrypt → upload → register → publish
-// (§8, PROTOCOL.md "Content posting"). This is the PUBLIC path: a fresh random per-post key, no
-// tier and no access grant, so it needs no master secret and works on a fresh page load. Paywalled
-// posting (tier-derived key + grant) arrives with tier management.
+// (§8, PROTOCOL.md "Content posting"). Public posts use a fresh random per-post key (no master
+// secret, no grant). Paywalled posts use the tier-derived key and publish an access grant so the
+// instance releases the tier key to subscribers; that path needs the master secret in memory.
 export const Route = createFileRoute('/studio/post')({
   component: NewPost,
 })
 
 type Draft = { id: string; img: EnvelopeImage; url: string; name: string }
+type Visibility = 'public' | number // a tier id
 
 async function fileToDraft(file: File): Promise<Draft> {
   const bytes = new Uint8Array(await file.arrayBuffer())
@@ -63,6 +69,8 @@ const PHASE_LABEL: Record<string, string> = {
 
 function NewPost() {
   const proxy = useSessionStore((s) => s.proxy)
+  const masterSecret = useCryptoStore((s) => s.masterSecret)
+  const { signMessageAsync } = useSignMessage()
   const params = useGovernanceStore((s) => s.params)
   const maxBytes = postSizeLimit(params)
 
@@ -70,9 +78,17 @@ function NewPost() {
   const pipelineError = usePipelineStore((s) => s.error)
   const fingerprint = usePipelineStore((s) => s.fingerprint)
 
+  const tiersQuery = useQuery({
+    queryKey: ['tiers', proxy],
+    queryFn: () => readTiers(proxy!),
+    enabled: !!proxy,
+  })
+  const tiers = tiersQuery.data ?? []
+
   const [text, setText] = useState('')
   const [images, setImages] = useState<Draft[]>([])
   const [warnings, setWarnings] = useState('')
+  const [visibility, setVisibility] = useState<Visibility>('public')
 
   // Revoke preview object URLs on unmount (the canonical bytes live in the drafts, not the URLs).
   const imagesRef = useRef(images)
@@ -80,6 +96,9 @@ function NewPost() {
   useEffect(() => () => imagesRef.current.forEach((d) => URL.revokeObjectURL(d.url)), [])
 
   const inFlight = phase === 'encrypting' || phase === 'uploading' || phase === 'registering'
+  const started = phase !== 'idle' // pipeline has output we must not retarget by changing tier
+  const isPublic = visibility === 'public'
+  const paywalledBlocked = !isPublic && !masterSecret
   const empty = text.trim() === '' && images.length === 0
 
   async function onFiles(e: React.ChangeEvent<HTMLInputElement>) {
@@ -100,34 +119,50 @@ function NewPost() {
   }
 
   // The three-phase pipeline (§8). Resumable: each phase is skipped when the store already holds
-  // its output, so a Retry after a mid-pipeline failure picks up where it left off — never
-  // re-encrypting or re-uploading work that already succeeded.
+  // its output, so a Retry after a mid-pipeline failure picks up where it left off.
   async function runPipeline() {
     const store = usePipelineStore
     usePipelineStore.setState({ error: null })
+    const tierId = isPublic ? PUBLIC_TIER_ID : (visibility as number)
     try {
-      if (!store.getState().encryptedBlob || !store.getState().contentKey) {
-        store.getState().startEncryption(PUBLIC_TIER_ID)
-        const { ciphertext, key } = await buildPublicCiphertext(
-          text,
-          images.map((d) => d.img),
-          maxBytes,
-        )
-        store.getState().setEncrypted(ciphertext, key)
+      if (!store.getState().encryptedBlob) {
+        store.getState().startEncryption(tierId)
+        if (isPublic) {
+          const { ciphertext, key } = await buildPublicCiphertext(
+            text,
+            images.map((d) => d.img),
+            maxBytes,
+          )
+          store.getState().setEncrypted(ciphertext, key)
+        } else {
+          if (!masterSecret) throw new Error('Your keys are not loaded in this session.')
+          const ciphertext = await buildPaywalledCiphertext(
+            text,
+            images.map((d) => d.img),
+            masterSecret,
+            tierId,
+            maxBytes,
+          )
+          store.getState().setEncrypted(ciphertext, null)
+        }
       }
 
       if (!store.getState().fingerprint) {
         store.getState().setPhase('uploading')
-        const fp = await uploadPost(store.getState().encryptedBlob!, PUBLIC_TIER_ID, parseWarnings(warnings))
+        const fp = await uploadPost(store.getState().encryptedBlob!, tierId, parseWarnings(warnings))
         store.getState().setFingerprint(fp)
       }
 
       store.getState().setPhase('registering')
       const fp = store.getState().fingerprint!
-      const key = store.getState().contentKey!
-      await registerContentOnChain(fp, PUBLIC_TIER_ID)
-      await markPublic(fp, key)
-      useCryptoStore.getState().cachePublicKey(fp, key)
+      await registerContentOnChain(fp, tierId)
+      if (isPublic) {
+        const key = store.getState().contentKey!
+        await markPublic(fp, key)
+        useCryptoStore.getState().cachePublicKey(fp, key)
+      } else {
+        await ensureAccessGrant(proxy!, tierId, signMessageAsync)
+      }
       store.getState().setPhase('done')
     } catch (e) {
       const failedAt = store.getState().phase
@@ -135,11 +170,16 @@ function NewPost() {
     }
   }
 
+  function discardUpload() {
+    usePipelineStore.getState().clear()
+  }
+
   function writeAnother() {
     imagesRef.current.forEach((d) => URL.revokeObjectURL(d.url))
     setImages([])
     setText('')
     setWarnings('')
+    setVisibility('public')
     usePipelineStore.getState().clear()
   }
 
@@ -149,8 +189,10 @@ function NewPost() {
         <div className={styles.success}>
           <h1 className={styles.title}>Posted.</h1>
           <p className={styles.successBody}>
-            Your post is encrypted, uploaded, and registered on-chain. It is public — anyone can
-            read it.
+            Your post is encrypted, uploaded, and registered on-chain.{' '}
+            {isPublic
+              ? 'It is public — anyone can read it.'
+              : 'It is paywalled — only subscribers to that tier can decrypt it.'}
           </p>
           <div className={styles.successActions}>
             {proxy && fingerprint && (
@@ -225,20 +267,46 @@ function NewPost() {
 
       <div className={styles.visibility}>
         <span className={styles.label}>Visibility</span>
-        <p className={styles.visibilityValue}>
-          Public — readable by anyone, no subscription required.
-        </p>
-        <p className={styles.hint}>
-          Paywalled tiers arrive with tier management. <Link to="/studio/tiers">Set up tiers →</Link>
-        </p>
+        <select
+          className={styles.input}
+          value={isPublic ? 'public' : String(visibility)}
+          onChange={(e) =>
+            setVisibility(e.target.value === 'public' ? 'public' : Number(e.target.value))
+          }
+          disabled={started}
+        >
+          <option value="public">Public — anyone can read it</option>
+          {tiers.map((t) => (
+            <option key={t.tierId} value={String(t.tierId)}>
+              Paywalled — tier {t.tierId}
+            </option>
+          ))}
+        </select>
+        {tiers.length === 0 && (
+          <p className={styles.hint}>
+            No tiers yet. <Link to="/studio/tiers">Set up tiers →</Link> to post paywalled content.
+          </p>
+        )}
+        {paywalledBlocked && (
+          <p className={styles.warning}>
+            Your keys aren’t loaded in this session. Paywalled posting needs the master secret from
+            onboarding, which isn’t recoverable in-browser after a refresh in v1 — post publicly, or
+            onboard again in this session.
+          </p>
+        )}
       </div>
 
       {pipelineError ? (
         <div className={styles.error} role="alert">
           <p>{pipelineError.message}</p>
-          <button type="button" className={styles.primary} onClick={runPipeline}>
-            Retry
-          </button>
+          <div className={styles.errorActions}>
+            <button type="button" className={styles.primary} onClick={runPipeline}>
+              Retry
+            </button>
+            <button type="button" className={styles.ghost} onClick={discardUpload}>
+              Discard &amp; edit
+            </button>
+          </div>
         </div>
       ) : inFlight ? (
         <p className={styles.progress}>{PHASE_LABEL[phase]}</p>
@@ -247,9 +315,9 @@ function NewPost() {
           type="button"
           className={styles.primary}
           onClick={runPipeline}
-          disabled={empty}
+          disabled={empty || paywalledBlocked}
         >
-          Encrypt &amp; post publicly
+          {isPublic ? 'Encrypt & post publicly' : `Encrypt & post to tier ${visibility}`}
         </button>
       )}
     </section>
