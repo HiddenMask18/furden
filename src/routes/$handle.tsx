@@ -7,6 +7,8 @@ import { keyFromHex } from '@/lib/crypto'
 import { readTokenMeta } from '@/lib/token'
 import { formatDuration } from '@/lib/tiers'
 import { PostCard } from '@/components/PostCard'
+import { SubscribeButton } from '@/components/SubscribeButton'
+import type { Address } from 'viem'
 import styles from './$handle.module.css'
 
 // `/$handle` — creator profile (public + subscriber view). The param is a handle or proxy: a
@@ -20,7 +22,7 @@ function short(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`
 }
 
-function TierCard({ tier }: { tier: TierDef }) {
+function TierCard({ tier, creatorProxy }: { tier: TierDef; creatorProxy: Address }) {
   const { data: meta } = useQuery({
     queryKey: ['tokenMeta', tier.token],
     queryFn: () => readTokenMeta(tier.token),
@@ -32,6 +34,7 @@ function TierCard({ tier }: { tier: TierDef }) {
         {meta ? `${formatUnits(BigInt(tier.price), meta.decimals)} ${meta.symbol}` : '…'}
       </span>
       <span className={styles.tierCardMeta}>every {formatDuration(BigInt(tier.duration))}</span>
+      <SubscribeButton creatorProxy={creatorProxy} tier={tier} />
     </div>
   )
 }
@@ -88,7 +91,7 @@ function CreatorProfile() {
       {p.tiers.length > 0 && (
         <div className={styles.tiers}>
           {p.tiers.map((t) => (
-            <TierCard key={t.tierId} tier={t} />
+            <TierCard key={t.tierId} tier={t} creatorProxy={p.proxy} />
           ))}
         </div>
       )}
