@@ -22,9 +22,13 @@ type PipelineState = {
   encryptedBlob: Uint8Array | null
   fingerprint: string | null
   tierId: number | null // 0 = public post (reserved)
+  // The per-post random key for a PUBLIC post — kept so the visibility step (and a retry of it)
+  // can publish it after the fingerprint is known. Null for paywalled posts (key is re-derivable
+  // from the master secret), and cleared with the rest on completion/abandon.
+  contentKey: Uint8Array | null
   error: PipelineError | null
   startEncryption: (tierId: number) => void
-  setEncrypted: (blob: Uint8Array) => void
+  setEncrypted: (blob: Uint8Array, contentKey?: Uint8Array | null) => void
   setFingerprint: (fp: string) => void
   setPhase: (phase: PipelinePhase) => void
   setError: (err: PipelineError) => void
@@ -36,12 +40,21 @@ export const usePipelineStore = create<PipelineState>((set) => ({
   encryptedBlob: null,
   fingerprint: null,
   tierId: null,
+  contentKey: null,
   error: null,
   startEncryption: (tierId) => set({ phase: 'encrypting', tierId, error: null }),
-  setEncrypted: (encryptedBlob) => set({ encryptedBlob, phase: 'uploading' }),
+  setEncrypted: (encryptedBlob, contentKey = null) =>
+    set({ encryptedBlob, contentKey, phase: 'uploading' }),
   setFingerprint: (fingerprint) => set({ fingerprint, phase: 'registering' }),
   setPhase: (phase) => set({ phase }),
   setError: (error) => set({ error, phase: 'error' }),
   clear: () =>
-    set({ phase: 'idle', encryptedBlob: null, fingerprint: null, tierId: null, error: null }),
+    set({
+      phase: 'idle',
+      encryptedBlob: null,
+      fingerprint: null,
+      tierId: null,
+      contentKey: null,
+      error: null,
+    }),
 }))
