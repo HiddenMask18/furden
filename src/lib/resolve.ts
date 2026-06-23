@@ -26,3 +26,13 @@ export async function resolveHandle(handleOrProxy: string): Promise<Address | nu
   })
   return proxy && proxy !== zeroAddress ? proxy : null
 }
+
+/** The on-chain handle for a proxy ('' when unset). Works for any creator, on- or off-instance. */
+export async function readHandle(proxy: Address): Promise<string> {
+  return readContract(wagmiConfig, {
+    address: getContracts(env.chainId).identityRegistry,
+    abi: identityRegistryAbi,
+    functionName: 'handleOf',
+    args: [proxy],
+  })
+}
