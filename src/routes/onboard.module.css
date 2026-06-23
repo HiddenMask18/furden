@@ -1,0 +1,166 @@
+.root {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: var(--space-12) var(--space-4);
+}
+
+.head {
+  margin-bottom: var(--space-10);
+}
+
+.title {
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-semibold);
+  margin-bottom: var(--space-3);
+}
+
+.lead {
+  color: var(--color-text-secondary);
+  font-size: var(--text-lg);
+  line-height: var(--leading-relaxed);
+}
+
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Each step is a marker + body. A connecting line runs through the markers. */
+.step {
+  display: grid;
+  grid-template-columns: var(--space-8) 1fr;
+  gap: var(--space-4);
+  position: relative;
+  padding-bottom: var(--space-6);
+}
+
+.step:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--space-8) / 2);
+  top: var(--space-8);
+  bottom: 0;
+  width: 1px;
+  background: var(--color-border-strong);
+}
+
+.marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-8);
+  height: var(--space-8);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text-tertiary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  z-index: var(--z-raised);
+}
+
+.step[data-state='done'] .marker {
+  border-color: var(--color-accent);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+.step[data-state='current'] .marker {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-text-inverse);
+}
+
+.body {
+  padding-top: var(--space-1);
+}
+
+.stepTitle {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.step[data-state='pending'] .stepTitle {
+  color: var(--color-text-tertiary);
+}
+
+.stepBlurb {
+  margin: var(--space-2) 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.step[data-state='pending'] .stepBlurb {
+  display: none;
+}
+
+.action {
+  margin-top: var(--space-4);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.primary {
+  background: var(--color-accent);
+  color: var(--color-text-inverse);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.skip {
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  padding: var(--space-2);
+}
+
+.skip:hover:not(:disabled) {
+  color: var(--color-text-secondary);
+}
+
+.skip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.error {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-error);
+  background: var(--color-error-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+
+.warning {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-warning);
+  line-height: var(--leading-normal);
+}
