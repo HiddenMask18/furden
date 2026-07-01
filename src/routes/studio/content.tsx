@@ -28,7 +28,7 @@ export type LibraryItem = {
 }
 
 /** Merge the creator's full inventory with the public subset (which alone carries keys + visibility). */
-async function loadLibrary(proxy: Address): Promise<LibraryItem[]> {
+export async function loadLibrary(proxy: Address): Promise<LibraryItem[]> {
   const [list, prof] = await Promise.all([creatorApi.listContent(), profile.get(proxy)])
   const publicKeys = new Map(prof.publicContent.map((p) => [p.fingerprint, p.contentKey]))
   return list.map((c) => ({

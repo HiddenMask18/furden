@@ -79,6 +79,47 @@ export async function enumerateSubscriptions(subscriberProxy: Address): Promise<
   )
 }
 
+export type CreatorSubscriber = {
+  subscriberProxy: Address
+  tierId: number
+  expiresAt: bigint // from the latest Subscribed event — expiry only changes when a new event fires
+}
+
+/**
+ * Enumerate a creator's subscribers from the indexed creatorProxy — the mirror of
+ * `enumerateSubscriptions`, used by the studio dashboard for at-a-glance counts. Deduped by
+ * (subscriber, tier) keeping the latest event; the event's expiresAt is authoritative here because
+ * a subscription's expiry only moves when another Subscribed event fires (subscribe/renew), and a
+ * plain lapse emits nothing. No per-subscriber live read, so this stays one getLogs even for a
+ * creator with many subscribers.
+ */
+export async function enumerateCreatorSubscribers(
+  creatorProxy: Address,
+): Promise<CreatorSubscriber[]> {
+  const client = getPublicClient(wagmiConfig)
+  if (!client) throw new Error('No RPC client available.')
+
+  const logs = await client.getLogs({
+    address: getContracts(env.chainId).subscription,
+    event: SUBSCRIBED,
+    args: { creatorProxy },
+    fromBlock: deployBlock,
+    toBlock: 'latest',
+  })
+
+  const byKey = new Map<string, CreatorSubscriber>()
+  for (const log of logs) {
+    const { subscriberProxy, tierId, expiresAt } = log.args
+    if (!subscriberProxy || tierId == null || expiresAt == null) continue
+    byKey.set(`${subscriberProxy}:${tierId}`, {
+      subscriberProxy,
+      tierId: Number(tierId),
+      expiresAt,
+    })
+  }
+  return [...byKey.values()]
+}
+
 /** True when a creator's on-chain instance URL is the one this client is configured for (§9). */
 export async function isOnConfiguredInstance(creatorProxy: Address): Promise<boolean> {
   try {

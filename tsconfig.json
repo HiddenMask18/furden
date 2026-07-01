@@ -21,7 +21,6 @@
     "exactOptionalPropertyTypes": false,
     "skipLibCheck": true,
 
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
     }
