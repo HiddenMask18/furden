@@ -91,8 +91,9 @@ The core creator→subscriber arc is implemented end-to-end:
 - **Content library** (`/studio/content`) — the creator's full inventory with per-post previews, and visibility changes run as the re-encryption pipeline (decrypt → re-encrypt under the new key → upload → register → publish → retire the old copy), never a metadata flip.
 - **Dashboard** (`/studio`) — a read-only overview: post / active-subscriber / tier counts, recent posts, and an instance-URL-not-published warning, assembled from the same on-chain + instance reads (shares their query caches).
 - **Settings** (`/studio/settings`) — handle (on-chain `setHandle`, with the per-period change allowance surfaced), bio (`PUT /creator/profile`), and emergency-wallet designation (on-chain `registerEmergencyWallet`).
+- **Access grants** (`/studio/access`) — per-tier grant state read from both stores (on-chain `getGrant` + instance), with a repair action to re-sync a partially published grant.
 
-The remaining studio screen (access grants) still renders a placeholder. The crypto/API arc has been validated end-to-end against a local Anvil + instance loop with a headless harness (registration, grant round-trip, subscribe → key delivery → decrypt, public + paywalled paths); the browser UI flows have not yet been walked manually. Contract addresses are not filled in (`src/lib/chain.ts`), so chain reads throw on Base / Base Sepolia until a canonical deployment exists.
+Only `/studio/keys` and `/studio/migrate` remain as placeholders (key rotation and instance migration — deferred, per DESIGN). The crypto/API arc has been validated end-to-end against a local Anvil + instance loop with a headless harness (registration, grant round-trip, subscribe → key delivery → decrypt, public + paywalled paths); the browser UI flows have not yet been walked manually. Contract addresses are not filled in (`src/lib/chain.ts`), so chain reads throw on Base / Base Sepolia until a canonical deployment exists.
 
 ## Contributing
 
