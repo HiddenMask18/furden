@@ -942,9 +942,35 @@ Onboarding presents the **emergency wallet** as the recovery path — the protoc
 
 ---
 
-## Appendix B — Open Questions
+## Appendix B — Open Questions and Task Queue
 
-No open questions as of 2026-06-11. The post-envelope format — the last item opened here — is resolved and recorded in Appendix A ("Post envelope") and PROTOCOL.md §Post envelope. The way to keep this section honest is to reopen it explicitly the moment a new gap is found, rather than leaving a known gap unrecorded; it has been wrong twice by claiming emptiness while gaps existed, so treat an empty Appendix B as a prompt to re-audit, not as proof of completeness.
+Reopened 2026-07-01 after the first live browser end-to-end run (anvil + instance + two MetaMask wallets). The arc validated cleanly — creator onboard → tier → public + paywalled post → subscriber subscribe → paywalled decrypt in feed, including the instance's checksummed-proxy key-delivery fix — but the run surfaced real defects, UX gaps, and a friction problem that drove a protocol-level plan. This is the standing task queue; work top-down. Reasoning from the run is recorded inline so the "why" survives.
+
+### 1. Standalone furden fixes (not blocked on the protocol) — do first
+
+These are furden-only; ship independently of the friction phases.
+
+- **Composer stuck on "posted successfully" (bug).** After a successful post, the pipeline store is never cleared, so `/studio/post` keeps showing the done/permalink state instead of a fresh composer. Fix: reset the pipeline + form on success (or on mount). *From the run: posting one post left the success notice permanently pinned.*
+- **Tier price shows no token symbol (bug).** The create-tier form's price input renders "0.01" with no unit. Fix: show the resolved token symbol beside the input (read token meta; blank = ETH) and echo it in the confirm. *From the run: "0.01 what — USD? ETH?"; ambiguity is dangerous with real money.*
+- **Repeat-subscribe has no guard (bug).** `SubscribeButton`/`Dialog` never checks `isSubscribed`, so a holder can subscribe again and pay twice (the contract *extends* expiry — verified 2 events, ~60-day expiry). Fix: read `isSubscribed(subProxy, creator, tierId)` up front; when active, show "Subscribed · renews {date}" and relabel the action **Extend**.
+- **Public posts absent from the feed (gap).** `assembleFeed` only pulls content for *subscribed* tiers; public posts are tier 0 and get excluded, so a creator's public posts never appear in a subscriber's feed. Fix: include subscribed creators' public posts in the feed. *Not a spec violation (feed is subscription-derived, §9), but users expect it.*
+- **No handle nudge after onboarding; handleless-is-valid unstated (gap).** Onboarding drops the creator into the studio with no prompt to set a handle. Handleless **is** valid (the profile resolves by proxy address; `handleOf` may be empty), but that isn't surfaced anywhere. Fix: add a handle step to the wizard (or a prominent dashboard prompt) and state that it's optional.
+
+### 2. Friction reduction — furden's part, ordered per den-protocol Appendix C (L0 → L2 → L1 → L3)
+
+The full plan and reasoning live in `den-protocol/spec/den-architecture.md` Appendix C and the normative tracker in `den-protocol/spec/den-spec.md` Appendix C. *From the run: too many wallet prompts, and — worse — a subscriber must pay a `register()` tx to exist before subscribing (the ETH-prerequisite barrier). On Base the gas amount is cents; the barrier is the prompts and the prerequisite.* furden's slices:
+
+- **L0 — signature merge (furden-only; do now, no contract dependency).** Onboarding asks for two signatures — sign-in, then a fixed message to recover the wallet pubkey for the key backup. Recover the pubkey from the sign-in signature furden already holds (`recoverPublicKey` over the challenge) and drop the second prompt. Touches `lib/auth.ts` + `lib/onboarding.ts` (`provisionCreatorKeys`).
+- **L2 follow-on (when den-protocol implicit-default-grants lands).** Make `ensureAccessGrant` a no-op for default `["tier:N"]` grants; only sign/publish for cumulative tiers. Removes the grant signature + `publishGrant` tx from the first paywalled post.
+- **L1 follow-on (when CREATE2 lazy-deploy lands).** Collapse the onboarding/subscribe flows: a subscriber's `register()` folds into `subscribe()` (one tx); the creator proxy deploys on first real action. Update the onboarding wizard's derived-stage logic and the subscribe step machine.
+- **L3 follow-on (when AA + paymaster lands).** Route writes as sponsored `UserOperation`s (4337) or via a 7702-delegated EOA so users need no gas token and prompts collapse to one-per-intent. Reworks the wagmi connector/transaction path; largest furden change, last.
+
+### 3. Deferred → Phase C (product polish)
+
+- **Landing page has no links to relevant pages.** Connecting on `/` routes nowhere; onboarding had to be reached by typing `/onboard`. Build the landing/about CTAs. *Bump to the front of Phase C — it blocked navigation in the run.*
+- **Subscriber-aware creator profile.** `/$handle` only renders the public profile; a subscriber sees a creator's unlocked paywalled posts only in the aggregate feed, not on the creator's own page. Add an authenticated per-tier fetch inline (a single-creator feed) for viewers who hold a tier. *Moderate new feature, not a bug — the content is accessible in the feed.*
+
+*Keep this section honest: it has claimed emptiness while gaps existed before. An empty Appendix B is a prompt to re-audit, not proof of completeness.*
 
 ---
 
