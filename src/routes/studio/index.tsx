@@ -81,7 +81,9 @@ function Dashboard() {
 
   const recent = items.slice(0, 5)
 
-  const num = (v: number | null | undefined, pending: boolean) => (pending ? '—' : String(v ?? 0))
+  // '—' while loading or on a failed read, so a transient RPC error doesn't read as a real zero.
+  const num = (v: number | null | undefined, q: { isPending: boolean; isError: boolean }) =>
+    q.isPending || q.isError ? '—' : String(v ?? 0)
 
   return (
     <section className={styles.root}>
@@ -105,12 +107,9 @@ function Dashboard() {
       )}
 
       <div className={styles.stats}>
-        <Stat label="Posts" value={num(items.length, libQuery.isPending)} to="/studio/content" />
-        <Stat
-          label="Active subscribers"
-          value={num(activeSubscribers, subsQuery.isPending)}
-        />
-        <Stat label="Tiers" value={num(tiersQuery.data?.length, tiersQuery.isPending)} to="/studio/tiers" />
+        <Stat label="Posts" value={num(items.length, libQuery)} to="/studio/content" />
+        <Stat label="Active subscribers" value={num(activeSubscribers, subsQuery)} />
+        <Stat label="Tiers" value={num(tiersQuery.data?.length, tiersQuery)} to="/studio/tiers" />
       </div>
 
       {!libQuery.isPending && items.length > 0 && (

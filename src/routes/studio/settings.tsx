@@ -84,7 +84,8 @@ function HandleSection({ proxy }: { proxy: Address }) {
         spellCheck={false}
       />
 
-      {statusQuery.data && (
+      {/* The first handle is free — the allowance only governs *changes* (contract setHandle). */}
+      {current && statusQuery.data && (
         <p className={styles.meta}>
           {statusQuery.data.remaining} of {statusQuery.data.allowance} change
           {statusQuery.data.allowance === 1 ? '' : 's'} left this period.
