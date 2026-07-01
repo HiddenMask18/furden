@@ -147,6 +147,18 @@ export const creator = {
     if (warnings && warnings.length) headers['X-Warnings'] = JSON.stringify(warnings)
     return request<{ fingerprint: string }>(`/creator/content`, { method: 'POST', auth: true, body: ciphertext, headers })
   },
+  // The creator's own full inventory (all tiers, public and paywalled), newest first. Unlike
+  // the public profile this carries no keys and no visibility flag — cross-reference the profile's
+  // publicContent to learn which fingerprints are currently public.
+  listContent: () =>
+    request<{ fingerprint: string; tierId: string; timestamp: number; warnings: string[] | null }[]>(
+      `/creator/content`,
+      { auth: true },
+    ),
+  // Removes the instance row for an orphaned fingerprint after a visibility re-encryption
+  // (the old ciphertext). 404 when the fingerprint is unknown or not this creator's.
+  deleteContent: (fingerprint: string) =>
+    request<void>(`/creator/content/${fingerprint}`, { method: 'DELETE', auth: true }),
   putGrant: (tierId: string, paths: string[], signature: string, version: number) =>
     request<{ stored: boolean }>(`/creator/grant`, { method: 'POST', auth: true, body: { tierId, paths, signature, version } }),
   getGrant: (tierId: number) =>

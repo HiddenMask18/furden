@@ -87,8 +87,10 @@ The core creator→subscriber arc is implemented end-to-end:
 - **Tier management** (`/studio/tiers`) — create/update subscription tiers, read back from on-chain `TierSet` events.
 - **Subscribe** — from a creator's tier cards: register (if needed), approve (ERC-20), `subscribe()`.
 - **Reading** — creator profile (`/$handle`), post permalink (`/$handle/post/$fingerprint`), and the subscriber feed (`/feed`) assembled client-side from on-chain `Subscribed` logs, with the §8 decryption pipeline.
+- **Subscriptions** (`/subscriptions`) — enumerated from on-chain logs with live expiry status and off-instance link-outs.
+- **Content library** (`/studio/content`) — the creator's full inventory with per-post previews, and visibility changes run as the re-encryption pipeline (decrypt → re-encrypt under the new key → upload → register → publish → retire the old copy), never a metadata flip.
 
-The remaining studio screens (dashboard, content library, settings, access grants) and `/subscriptions` still render placeholders. Everything above is compiler-verified but has **not yet been exercised against a live instance** — run it against a local Anvil + instance loop with the `VITE_DEV_*` overrides. Contract addresses are not filled in (`src/lib/chain.ts`), so chain reads throw on Base / Base Sepolia until a canonical deployment exists.
+The remaining studio screens (dashboard, settings, access grants) still render placeholders. The crypto/API arc has been validated end-to-end against a local Anvil + instance loop with a headless harness (registration, grant round-trip, subscribe → key delivery → decrypt, public + paywalled paths); the browser UI flows have not yet been walked manually. Contract addresses are not filled in (`src/lib/chain.ts`), so chain reads throw on Base / Base Sepolia until a canonical deployment exists.
 
 ## Contributing
 

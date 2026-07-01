@@ -18,6 +18,10 @@ type PostCardProps = {
   timestamp: number // Unix ms
   authed?: boolean
   baseUrl?: string
+  /** Copy shown in the locked state. Defaults to the subscriber prompt. */
+  lockedMessage?: string
+  /** Render the timestamp + warnings header. Off when the caller supplies its own chrome. */
+  showMeta?: boolean
 }
 
 export function PostCard({
@@ -27,6 +31,8 @@ export function PostCard({
   timestamp,
   authed,
   baseUrl,
+  lockedMessage = 'Subscribe to this tier to unlock.',
+  showMeta = true,
 }: PostCardProps) {
   const locked = keyBytes == null
   const hasWarnings = !!warnings && warnings.length > 0
@@ -60,19 +66,21 @@ export function PostCard({
 
   return (
     <article className={styles.card}>
-      <header className={styles.meta}>
-        <time className={styles.time}>{when}</time>
-        {hasWarnings && (
-          <span className={styles.warnTag}>{warnings!.join(', ')}</span>
-        )}
-      </header>
+      {showMeta && (
+        <header className={styles.meta}>
+          <time className={styles.time}>{when}</time>
+          {hasWarnings && (
+            <span className={styles.warnTag}>{warnings!.join(', ')}</span>
+          )}
+        </header>
+      )}
 
       {locked ? (
         <div className={styles.locked}>
           <span className={styles.lockIcon} aria-hidden>
             🔒
           </span>
-          <p>Subscribe to this tier to unlock.</p>
+          <p>{lockedMessage}</p>
         </div>
       ) : query.isPending ? (
         <div className={styles.skeleton} />
