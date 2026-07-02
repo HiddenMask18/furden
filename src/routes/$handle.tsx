@@ -6,6 +6,8 @@ import { profile as profileApi, type TierDef } from '@/lib/api'
 import { keyFromHex } from '@/lib/crypto'
 import { readTokenMeta } from '@/lib/token'
 import { formatDuration } from '@/lib/tiers'
+import { enumerateSubscriptions, loadTierContent } from '@/lib/feed'
+import { useSessionStore } from '@/stores/session'
 import { PostCard } from '@/components/PostCard'
 import { SubscribeButton } from '@/components/SubscribeButton'
 import type { Address } from 'viem'
@@ -14,6 +16,8 @@ import styles from './$handle.module.css'
 // `/$handle` — creator profile (public + subscriber view). The param is a handle or proxy: a
 // 40-hex address is used directly, otherwise resolved on-chain (§6). No wallet needed to view —
 // public posts carry their key in the profile and decrypt for anyone; paywalled posts show locked.
+// A signed-in viewer who holds one of this creator's tiers also gets those posts inline (a
+// single-creator feed), not just in the aggregate /feed.
 export const Route = createFileRoute('/$handle')({
   component: CreatorProfile,
 })
@@ -41,6 +45,8 @@ function TierCard({ tier, creatorProxy }: { tier: TierDef; creatorProxy: Address
 
 function CreatorProfile() {
   const { handle } = Route.useParams()
+  const token = useSessionStore((s) => s.token)
+  const sessionProxy = useSessionStore((s) => s.proxy)
 
   const resolveQuery = useQuery({
     queryKey: ['resolve', handle],
@@ -52,6 +58,21 @@ function CreatorProfile() {
     queryKey: ['profile', proxy],
     queryFn: () => profileApi.get(proxy!),
     enabled: !!proxy,
+  })
+
+  // The viewer's unlocked posts from this creator: held tiers (one creator-narrowed getLogs +
+  // live expiry) → per-tier inventory + key. Only runs with a session; failure degrades to the
+  // public view rather than breaking the page.
+  const unlockedQuery = useQuery({
+    queryKey: ['creatorUnlocked', proxy, sessionProxy],
+    queryFn: async () => {
+      const subs = await enumerateSubscriptions(sessionProxy!, proxy!)
+      const now = BigInt(Math.floor(Date.now() / 1000))
+      const held = subs.filter((s) => s.expiresAt > now)
+      const groups = await Promise.all(held.map((s) => loadTierContent(proxy!, s.tierId)))
+      return groups.flat()
+    },
+    enabled: !!proxy && !!sessionProxy && !!token,
   })
 
   if (resolveQuery.isPending) {
@@ -78,7 +99,30 @@ function CreatorProfile() {
   }
 
   const p = profileQuery.data
-  const posts = [...p.publicContent].sort((a, b) => b.timestamp - a.timestamp)
+
+  // Public posts (key ships in the profile) merged with the viewer's unlocked paywalled posts,
+  // newest first. Deduped by fingerprint — a post is one or the other, but never trust two
+  // sources not to overlap.
+  const merged = [
+    ...p.publicContent.map((c) => ({
+      fingerprint: c.fingerprint,
+      key: keyFromHex(c.contentKey),
+      timestamp: c.timestamp,
+      warnings: c.warnings,
+      authed: false,
+    })),
+    ...(unlockedQuery.data ?? []).map((i) => ({
+      fingerprint: i.fingerprint,
+      key: i.key,
+      timestamp: i.timestamp,
+      warnings: i.warnings,
+      authed: true,
+    })),
+  ]
+  const seen = new Set<string>()
+  const posts = merged
+    .filter((c) => (seen.has(c.fingerprint) ? false : (seen.add(c.fingerprint), true)))
+    .sort((a, b) => b.timestamp - a.timestamp)
 
   return (
     <section className={styles.root}>
@@ -97,6 +141,11 @@ function CreatorProfile() {
       )}
 
       <div className={styles.posts}>
+        {unlockedQuery.isError && (
+          <p className={styles.muted}>
+            Your subscriber content couldn’t be loaded right now — showing the public view.
+          </p>
+        )}
         {posts.length === 0 ? (
           <p className={styles.muted}>No public posts yet.</p>
         ) : (
@@ -104,9 +153,10 @@ function CreatorProfile() {
             <PostCard
               key={c.fingerprint}
               fingerprint={c.fingerprint}
-              keyBytes={keyFromHex(c.contentKey)}
+              keyBytes={c.key}
               warnings={c.warnings}
               timestamp={c.timestamp}
+              authed={c.authed}
             />
           ))
         )}

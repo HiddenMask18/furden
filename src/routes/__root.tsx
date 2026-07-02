@@ -1,6 +1,7 @@
 import { createRootRouteWithContext, Link, Outlet, useRouterState } from '@tanstack/react-router'
 import type { RouterContext } from '@/lib/router-context'
 import { ChainIndicator } from '@/components/ChainIndicator'
+import { SessionBanner } from '@/components/SessionBanner'
 import { WalletBadge } from '@/components/WalletBadge'
 import styles from './__root.module.css'
 
@@ -10,8 +11,12 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 
 function RootLayout() {
   const { session } = Route.useRouteContext()
+  const pathname = useRouterState({ select: (s) => s.location.pathname })
   // The studio renders its own side-rail chrome; hide the top bar nav links there.
-  const inStudio = useRouterState({ select: (s) => s.location.pathname.startsWith('/studio') })
+  const inStudio = pathname.startsWith('/studio')
+  // The onboarding wizard owns its own register → sign-in stages; a parallel sign-in banner
+  // there would compete with the wizard's current step.
+  const inOnboarding = pathname === '/onboard'
 
   return (
     <div className={styles.shell}>
@@ -46,6 +51,7 @@ function RootLayout() {
           <WalletBadge />
         </div>
       </header>
+      {!inOnboarding && <SessionBanner />}
       <main className={styles.main}>
         <Outlet />
       </main>

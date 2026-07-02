@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { ConnectModal } from '@/components/ConnectModal'
-import { Placeholder } from '@/components/Placeholder'
+import styles from './connect.module.css'
 
 // `/connect` — wallet connection entry and the redirect target for gated routes (§6). Gated
 // routes pass `from` = the path that bounced the user here. We only accept internal paths
@@ -21,10 +21,13 @@ function Connect() {
 
   return (
     <>
-      <Placeholder
-        title="Connect your wallet"
-        blurb="Your wallet is your key. Connect to sign in to your DEN session — wallet connection is requested only at the point you act, never to browse a public profile."
-      />
+      <section className={styles.root}>
+        <h1 className={styles.title}>Connect your wallet</h1>
+        <p className={styles.blurb}>
+          Your wallet is your key. Connect to sign in to your DEN session — wallet connection is
+          requested only at the point you act, never to browse a public profile.
+        </p>
+      </section>
       <ConnectModal
         open={open}
         onOpenChange={(next) => {

@@ -1,8 +1,9 @@
 import styles from './Placeholder.module.css'
 
 /**
- * Scaffold placeholder for a not-yet-implemented screen. Each route renders one of these so the
- * route tree, guards, and navigation are wired and walkable before any feature work lands.
+ * Empty screen for a deliberately deferred feature (v1.x stubs like key rotation and instance
+ * migration). Started life as the scaffold placeholder for every route; the blurb now carries
+ * the honest "coming in v1.x" copy, so there is no builder's-debris footnote.
  */
 export function Placeholder({
   title,
@@ -18,7 +19,6 @@ export function Placeholder({
       <h1 className={styles.title}>{title}</h1>
       {blurb && <p className={styles.blurb}>{blurb}</p>}
       {children}
-      <p className={styles.stub}>Not built yet — scaffold placeholder.</p>
     </section>
   )
 }

@@ -44,16 +44,20 @@ const TIER_PATH_RE = /^tier:(\d+)$/
  * Enumerate a subscriber's subscriptions with live expiry. One getLogs on the indexed
  * subscriberProxy returns every (creator, tier); re-subscribes are deduped keeping the latest, and
  * the current expiry is read from the contract (the event's expiresAt is only correct as of that
- * block). Used by both /feed and /subscriptions.
+ * block). Used by /feed and /subscriptions; pass `creatorProxy` (also indexed) to narrow to the
+ * viewer's subscriptions with one creator — the profile's held-tiers check.
  */
-export async function enumerateSubscriptions(subscriberProxy: Address): Promise<Subscription[]> {
+export async function enumerateSubscriptions(
+  subscriberProxy: Address,
+  creatorProxy?: Address,
+): Promise<Subscription[]> {
   const client = getPublicClient(wagmiConfig)
   if (!client) throw new Error('No RPC client available.')
 
   const logs = await client.getLogs({
     address: getContracts(env.chainId).subscription,
     event: SUBSCRIBED,
-    args: { subscriberProxy },
+    args: creatorProxy ? { subscriberProxy, creatorProxy } : { subscriberProxy },
     fromBlock: deployBlock,
     toBlock: 'latest',
   })
@@ -130,6 +134,40 @@ export async function isOnConfiguredInstance(creatorProxy: Address): Promise<boo
 }
 
 /**
+ * Fetch one (creator, tier)'s inventory and tier key in parallel, cache every derivation-path key
+ * the grant returned (a higher tier may cover lower paths), and return decryptable items. The
+ * shared per-tier unit of /feed and the subscriber-aware creator profile. Requires an active
+ * session (both calls are authenticated).
+ */
+export async function loadTierContent(creatorProxy: Address, tierId: number): Promise<FeedItem[]> {
+  const cache = useCryptoStore.getState()
+  const [inventory, keyRes] = await Promise.all([
+    contentApi.byCreator(creatorProxy, tierId),
+    accessApi.subscriptionKey(creatorProxy, tierId),
+  ])
+
+  for (const [path, hex] of Object.entries(keyRes.keys)) {
+    const m = TIER_PATH_RE.exec(path)
+    if (m) cache.cacheContentKey(creatorProxy, Number(m[1]), keyFromHex(hex))
+  }
+
+  const items: FeedItem[] = []
+  for (const c of inventory.content) {
+    const key = cache.getContentKey(creatorProxy, Number(c.tierId))
+    if (!key) continue // no key for this content's path — skip rather than show a broken card
+    items.push({
+      creatorProxy,
+      fingerprint: c.fingerprint,
+      tierId: Number(c.tierId),
+      timestamp: c.timestamp,
+      warnings: c.warnings,
+      key,
+    })
+  }
+  return items
+}
+
+/**
  * Assemble the feed: active subscriptions on the configured instance → per (creator, tier)
  * inventory + tier key, PLUS each subscribed creator's public posts → decryptable items, newest
  * first. Public posts are tier 0, so the subscription-derived enumeration alone never sees them —
@@ -157,33 +195,7 @@ export async function assembleFeed(subscriberProxy: Address): Promise<FeedItem[]
   const tierGroups = await Promise.all(
     active
       .filter((s) => onInstance.has(s.creatorProxy))
-      .map(async (s) => {
-        const [inventory, keyRes] = await Promise.all([
-          contentApi.byCreator(s.creatorProxy, s.tierId),
-          accessApi.subscriptionKey(s.creatorProxy, s.tierId),
-        ])
-
-        // Cache every derivation-path key the grant returned (a higher tier may cover lower paths).
-        for (const [path, hex] of Object.entries(keyRes.keys)) {
-          const m = TIER_PATH_RE.exec(path)
-          if (m) cache.cacheContentKey(s.creatorProxy, Number(m[1]), keyFromHex(hex))
-        }
-
-        const items: FeedItem[] = []
-        for (const c of inventory.content) {
-          const key = cache.getContentKey(s.creatorProxy, Number(c.tierId))
-          if (!key) continue // no key for this content's path — skip rather than show a broken card
-          items.push({
-            creatorProxy: s.creatorProxy,
-            fingerprint: c.fingerprint,
-            tierId: Number(c.tierId),
-            timestamp: c.timestamp,
-            warnings: c.warnings,
-            key,
-          })
-        }
-        return items
-      }),
+      .map((s) => loadTierContent(s.creatorProxy, s.tierId)),
   )
 
   const publicGroups = await Promise.all(

@@ -44,10 +44,12 @@ function SessionBridge() {
     }
   }, [status, address, session.token, signMessageAsync])
 
-  // Disconnect: clear everything (§5 step 5).
+  // Disconnect: clear everything (§5 step 5). Disconnecting is deliberate, so the ended-session
+  // flag is reset — a declined sign-in after reconnecting is "not signed in", not "ended".
   useEffect(() => {
     if (status === 'disconnected' && session.token) {
       useSessionStore.getState().clearSession()
+      useSessionStore.setState({ sessionEnded: false })
       useCryptoStore.getState().clearAll()
       usePipelineStore.getState().clear()
       attempted.current = null

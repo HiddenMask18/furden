@@ -16,6 +16,20 @@ export async function signIn(
   walletAddress: Address,
   signMessageAsync: (args: { message: string }) => Promise<`0x${string}`>,
 ): Promise<boolean> {
+  // Mark the sequence in flight so the not-signed-in banner stays down while the wallet prompt
+  // is open (§5.4 — a pending prompt is initiation, not an error state).
+  useSessionStore.getState().setAuthPending(true)
+  try {
+    return await runSignIn(walletAddress, signMessageAsync)
+  } finally {
+    useSessionStore.getState().setAuthPending(false)
+  }
+}
+
+async function runSignIn(
+  walletAddress: Address,
+  signMessageAsync: (args: { message: string }) => Promise<`0x${string}`>,
+): Promise<boolean> {
   const { nonce } = await authApi.challenge(walletAddress)
   const signature = await signMessageAsync({ message: nonce })
   const { sessionToken, proxy } = await authApi.verify(walletAddress, nonce, signature)
