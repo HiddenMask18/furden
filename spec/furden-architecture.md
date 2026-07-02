@@ -967,7 +967,7 @@ The full plan and reasoning live in `den-protocol/spec/den-architecture.md` Appe
 
 ### 3. Deferred → Phase C (product polish)
 
-- **Landing page has no links to relevant pages.** Connecting on `/` routes nowhere; onboarding had to be reached by typing `/onboard`. Build the landing/about CTAs. *Bump to the front of Phase C — it blocked navigation in the run.*
+- ~~**Landing page has no links to relevant pages.**~~ DONE 2026-07-02. `/` is now a real landing page (hero + two path cards + about pointer, manifesto voice): a creator-lookup form (handle or 0x address → `/$handle` — the "you arrive with their name" entry point), session-aware links (signed out: Connect with `from=/feed`; signed in: Feed + Subscriptions; `isCreator`: Open your studio, else Set up your studio → `/onboard`). `/about` is real prose (why DEN exists, the three-participant split, browser-side crypto) ending in the same entry points + an external protocol-repo link. Connecting from `/` now lands back on a page with somewhere to go.
 - **Subscriber-aware creator profile.** `/$handle` only renders the public profile; a subscriber sees a creator's unlocked paywalled posts only in the aggregate feed, not on the creator's own page. Add an authenticated per-tier fetch inline (a single-creator feed) for viewers who hold a tier. *Moderate new feature, not a bug — the content is accessible in the feed.*
 
 *Keep this section honest: it has claimed emptiness while gaps existed before. An empty Appendix B is a prompt to re-audit, not proof of completeness.*

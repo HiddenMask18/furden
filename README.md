@@ -81,6 +81,7 @@ pnpm preview       # serve the production build locally
 
 The core creator→subscriber arc is implemented end-to-end:
 
+- **Landing & about** (`/`, `/about`) — static entry points (no discovery API): creator lookup by handle/address, session-aware feed/studio links, and what-DEN-is prose.
 - **Wallet & session** — connect (`/connect`) and challenge/verify sign-in.
 - **Creator onboarding** (`/onboard`) — register identity, generate + encrypt the master secret, upload blobs, publish the instance URL.
 - **Composer** (`/studio/post`) — the three-phase pipeline (envelope → encrypt → upload → register), for both public posts and paywalled posts (tier-derived key + access grant).

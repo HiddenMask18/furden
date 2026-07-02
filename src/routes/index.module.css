@@ -1,0 +1,112 @@
+.root {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: var(--space-12) var(--space-4);
+}
+
+.hero {
+  max-width: 720px;
+}
+
+.title {
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-semibold);
+  margin-bottom: var(--space-3);
+}
+
+.blurb {
+  color: var(--color-text-secondary);
+  font-size: var(--text-lg);
+  line-height: var(--leading-relaxed);
+}
+
+.paths {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--space-4);
+  margin-top: var(--space-10);
+}
+
+.card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  background: var(--color-surface);
+}
+
+.cardTitle {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  margin-bottom: var(--space-2);
+}
+
+.cardBody {
+  color: var(--color-text-secondary);
+  line-height: var(--leading-relaxed);
+}
+
+.lookup {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.input {
+  flex: 1;
+  min-width: 180px;
+  box-sizing: border-box;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  font-size: var(--text-base);
+  padding: var(--space-3) var(--space-4);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-border-focus);
+}
+
+.primary {
+  background: var(--color-accent);
+  color: var(--color-text-inverse);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cardLinks {
+  margin-top: var(--space-4);
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  color: var(--color-text-secondary);
+}
+
+.link {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.footnote {
+  margin-top: var(--space-10);
+  color: var(--color-text-secondary);
+}
