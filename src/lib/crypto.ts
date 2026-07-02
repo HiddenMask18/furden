@@ -78,9 +78,23 @@ export async function encryptBlob(
 }
 
 /**
- * Recover a wallet's secp256k1 public key from a signature. Injected wallets expose neither
- * the private nor the public key — signing a fixed message and recovering from it is the only
- * client-side way to obtain it (needed to write the portability/emergency blobs).
+ * Recover a wallet's secp256k1 public key from an existing EIP-191 personal-message signature.
+ * Any signature the wallet has already produced (e.g. sign-in) reveals the public key — no
+ * dedicated prompt needed.
+ */
+export async function pubKeyFromSignature(
+  message: string,
+  signature: `0x${string}`,
+): Promise<Uint8Array> {
+  const pubKeyHex = await recoverPublicKey({ hash: hashMessage(message), signature })
+  return toBytes(pubKeyHex) // 65-byte uncompressed point (0x04…); @noble accepts it as a recipient key
+}
+
+/**
+ * Recover a wallet's secp256k1 public key by prompting for a fresh signature. Injected wallets
+ * expose neither the private nor the public key — recovery from a signature is the only
+ * client-side way to obtain it (needed to write the portability/emergency blobs). Fallback path:
+ * sign-in normally captures the pubkey from its own signature without this extra prompt.
  */
 export async function recoverWalletPubKey(
   signMessageAsync: (args: { message: string }) => Promise<`0x${string}`>,
@@ -88,8 +102,7 @@ export async function recoverWalletPubKey(
   const message =
     'DEN: reveal public key to encrypt a recovery copy of your keys to this wallet'
   const signature = await signMessageAsync({ message })
-  const pubKeyHex = await recoverPublicKey({ hash: hashMessage(message), signature })
-  return toBytes(pubKeyHex) // 65-byte uncompressed point (0x04…); @noble accepts it as a recipient key
+  return pubKeyFromSignature(message, signature)
 }
 
 /**

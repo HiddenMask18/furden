@@ -8,7 +8,7 @@ import { ApiError } from '@/lib/api'
 import { isWalletRegistered, registerIdentity } from '@/lib/onboarding'
 import { readTokenMeta, isEth } from '@/lib/token'
 import { formatDuration } from '@/lib/tiers'
-import { readAllowance, approveToken, subscribe } from '@/lib/subscribe'
+import { readAllowance, approveToken, subscribe, readSubscriptionStatus } from '@/lib/subscribe'
 import styles from './SubscribeDialog.module.css'
 
 /**
@@ -41,7 +41,9 @@ export function SubscribeDialog({ open, onOpenChange, creatorProxy, tier, onSubs
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [done, setDone] = useState(false)
+  // Snapshot which action completed — after success the subscription query refetches as active,
+  // so deriving the done copy from `extending` would mislabel a first subscribe as an extension.
+  const [done, setDone] = useState<null | 'subscribed' | 'extended'>(null)
 
   const metaQuery = useQuery({
     queryKey: ['tokenMeta', token],
@@ -57,12 +59,26 @@ export function SubscribeDialog({ open, onOpenChange, creatorProxy, tier, onSubs
     queryFn: () => readAllowance(token, address!),
     enabled: !!address && erc20,
   })
+  // Shared with SubscribeButton's pre-check (same key) — an active holder is EXTENDING, and the
+  // copy must say so: paying again is valid (expiry extends) but must never look accidental.
+  const subQuery = useQuery({
+    queryKey: ['subscription', creatorProxy, tier.tierId, address],
+    queryFn: () => readSubscriptionStatus(address!, creatorProxy, Number(tier.tierId)),
+    enabled: !!address,
+  })
+  const extending = subQuery.data?.active ?? false
+  const until = extending
+    ? new Date(Number(subQuery.data!.expiresAt) * 1000).toLocaleDateString()
+    : null
 
   const meta = metaQuery.data
   const priceText = meta ? `${formatUnits(price, meta.decimals)} ${meta.symbol}` : '…'
 
   const checking =
-    registeredQuery.isPending || metaQuery.isPending || (erc20 && allowanceQuery.isPending)
+    registeredQuery.isPending ||
+    metaQuery.isPending ||
+    subQuery.isPending ||
+    (erc20 && allowanceQuery.isPending)
   const needsApprove = erc20 && (allowanceQuery.data ?? 0n) < price
 
   const step: 'register' | 'approve' | 'subscribe' =
@@ -90,7 +106,8 @@ export function SubscribeDialog({ open, onOpenChange, creatorProxy, tier, onSubs
         await qc.invalidateQueries({ queryKey: ['allowance', token, address] })
       } else {
         await subscribe(creatorProxy, Number(tier.tierId), price, token)
-        setDone(true)
+        setDone(extending ? 'extended' : 'subscribed')
+        await qc.invalidateQueries({ queryKey: ['subscription', creatorProxy, tier.tierId, address] })
         onSubscribed?.()
       }
     })
@@ -101,7 +118,7 @@ export function SubscribeDialog({ open, onOpenChange, creatorProxy, tier, onSubs
       ? 'Register your identity'
       : step === 'approve'
         ? `Approve ${meta?.symbol ?? 'token'}`
-        : `Subscribe — ${priceText}`
+        : `${extending ? 'Extend' : 'Subscribe'} — ${priceText}`
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -109,17 +126,30 @@ export function SubscribeDialog({ open, onOpenChange, creatorProxy, tier, onSubs
         <Dialog.Overlay className={styles.overlay} />
         <Dialog.Content className={styles.content}>
           <Dialog.Title className={styles.title}>
-            {done ? 'Subscribed' : `Subscribe to tier ${tier.tierId}`}
+            {done
+              ? done === 'extended'
+                ? 'Extended'
+                : 'Subscribed'
+              : `${extending ? 'Extend' : 'Subscribe to'} tier ${tier.tierId}`}
           </Dialog.Title>
 
           <Dialog.Description className={styles.summary}>
             {priceText} · every {formatDuration(BigInt(tier.duration))}
           </Dialog.Description>
 
+          {!done && extending && (
+            <p className={styles.doneBody}>
+              You already hold this tier until {until}. Paying again adds{' '}
+              {formatDuration(BigInt(tier.duration))} on top — you won’t lose time.
+            </p>
+          )}
+
           {done ? (
             <>
               <p className={styles.doneBody}>
-                You now hold this tier. Its content unlocks in your feed.
+                {done === 'extended'
+                  ? 'Your subscription now runs longer. Nothing else changes.'
+                  : 'You now hold this tier. Its content unlocks in your feed.'}
               </p>
               <button
                 type="button"

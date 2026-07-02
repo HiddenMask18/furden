@@ -95,6 +95,12 @@ function NewPost() {
   imagesRef.current = images
   useEffect(() => () => imagesRef.current.forEach((d) => URL.revokeObjectURL(d.url)), [])
 
+  // A leftover 'done' from a previous visit is stale — this mount is a fresh composer. Error and
+  // mid-pipeline states are kept: they carry resumable output the store exists to preserve.
+  useEffect(() => {
+    if (usePipelineStore.getState().phase === 'done') usePipelineStore.getState().clear()
+  }, [])
+
   const inFlight = phase === 'encrypting' || phase === 'uploading' || phase === 'registering'
   const started = phase !== 'idle' // pipeline has output we must not retarget by changing tier
   const isPublic = visibility === 'public'

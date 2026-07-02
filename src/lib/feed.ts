@@ -14,7 +14,7 @@ import { wagmiConfig } from './wagmi'
 import { subscriptionAbi } from './abis'
 import { getContracts, deployBlock } from './chain'
 import { env } from './env'
-import { content as contentApi, access as accessApi } from './api'
+import { content as contentApi, access as accessApi, profile as profileApi } from './api'
 import { keyFromHex } from './crypto'
 import { readInstanceUrl } from './onboarding'
 import { useCryptoStore } from '@/stores/crypto'
@@ -131,8 +131,11 @@ export async function isOnConfiguredInstance(creatorProxy: Address): Promise<boo
 
 /**
  * Assemble the feed: active subscriptions on the configured instance → per (creator, tier)
- * inventory + tier key → decryptable items, newest first. Tier keys are cached for reuse. Requires
- * an active session (the content/key calls are authenticated).
+ * inventory + tier key, PLUS each subscribed creator's public posts → decryptable items, newest
+ * first. Public posts are tier 0, so the subscription-derived enumeration alone never sees them —
+ * but a subscriber expects a creator they pay for to appear whole; the per-post key ships in the
+ * public profile. Tier keys are cached for reuse. Requires an active session (the content/key
+ * calls are authenticated; the profile call is not).
  */
 export async function assembleFeed(subscriberProxy: Address): Promise<FeedItem[]> {
   const subs = await enumerateSubscriptions(subscriberProxy)
@@ -140,41 +143,71 @@ export async function assembleFeed(subscriberProxy: Address): Promise<FeedItem[]
   const active = subs.filter((s) => s.expiresAt > now)
 
   const cache = useCryptoStore.getState()
-  const groups = await Promise.all(
-    active.map(async (s) => {
-      if (!(await isOnConfiguredInstance(s.creatorProxy))) return [] // link-out, not in feed
-      const [inventory, keyRes] = await Promise.all([
-        contentApi.byCreator(s.creatorProxy, s.tierId),
-        accessApi.subscriptionKey(s.creatorProxy, s.tierId),
-      ])
 
-      // Cache every derivation-path key the grant returned (a higher tier may cover lower paths).
-      for (const [path, hex] of Object.entries(keyRes.keys)) {
-        const m = TIER_PATH_RE.exec(path)
-        if (m) cache.cacheContentKey(s.creatorProxy, Number(m[1]), keyFromHex(hex))
-      }
+  // Resolve each distinct creator to the configured instance once (a creator can appear via
+  // several tiers). Off-instance creators are link-outs on /subscriptions, not feed errors.
+  const creators = [...new Set(active.map((s) => s.creatorProxy))]
+  const onInstance = new Set<Address>()
+  await Promise.all(
+    creators.map(async (c) => {
+      if (await isOnConfiguredInstance(c)) onInstance.add(c)
+    }),
+  )
 
-      const items: FeedItem[] = []
-      for (const c of inventory.content) {
-        const key = cache.getContentKey(s.creatorProxy, Number(c.tierId))
-        if (!key) continue // no key for this content's path — skip rather than show a broken card
-        items.push({
-          creatorProxy: s.creatorProxy,
+  const tierGroups = await Promise.all(
+    active
+      .filter((s) => onInstance.has(s.creatorProxy))
+      .map(async (s) => {
+        const [inventory, keyRes] = await Promise.all([
+          contentApi.byCreator(s.creatorProxy, s.tierId),
+          accessApi.subscriptionKey(s.creatorProxy, s.tierId),
+        ])
+
+        // Cache every derivation-path key the grant returned (a higher tier may cover lower paths).
+        for (const [path, hex] of Object.entries(keyRes.keys)) {
+          const m = TIER_PATH_RE.exec(path)
+          if (m) cache.cacheContentKey(s.creatorProxy, Number(m[1]), keyFromHex(hex))
+        }
+
+        const items: FeedItem[] = []
+        for (const c of inventory.content) {
+          const key = cache.getContentKey(s.creatorProxy, Number(c.tierId))
+          if (!key) continue // no key for this content's path — skip rather than show a broken card
+          items.push({
+            creatorProxy: s.creatorProxy,
+            fingerprint: c.fingerprint,
+            tierId: Number(c.tierId),
+            timestamp: c.timestamp,
+            warnings: c.warnings,
+            key,
+          })
+        }
+        return items
+      }),
+  )
+
+  const publicGroups = await Promise.all(
+    [...onInstance].map(async (creatorProxy) => {
+      const p = await profileApi.get(creatorProxy)
+      return p.publicContent.map((c): FeedItem => {
+        const key = keyFromHex(c.contentKey)
+        cache.cachePublicKey(c.fingerprint, key)
+        return {
+          creatorProxy,
           fingerprint: c.fingerprint,
           tierId: Number(c.tierId),
           timestamp: c.timestamp,
           warnings: c.warnings,
           key,
-        })
-      }
-      return items
+        }
+      })
     }),
   )
 
   // Flatten, dedupe by fingerprint (a post seen via multiple tiers), newest first.
   const seen = new Set<string>()
   const merged: FeedItem[] = []
-  for (const item of groups.flat()) {
+  for (const item of [...tierGroups.flat(), ...publicGroups.flat()]) {
     if (seen.has(item.fingerprint)) continue
     seen.add(item.fingerprint)
     merged.push(item)

@@ -19,6 +19,7 @@ import {
 import { identityRegistryAbi, identityImplAbi } from './abis'
 import { getContracts } from './chain'
 import { env } from './env'
+import { useCryptoStore } from '@/stores/crypto'
 
 type SignMessage = (args: { message: string }) => Promise<`0x${string}`>
 
@@ -66,7 +67,10 @@ export async function provisionCreatorKeys(signMessageAsync: SignMessage): Promi
   // Portability blob — encrypted to the connected wallet's recovered secp256k1 pubkey. Writing it
   // needs only a signature; reading it back (recovery) needs the private key, which an injected
   // wallet never exposes — that's the v1.x recovery-side gap (PROTOCOL.md step 5 note).
-  const walletPubKey = await recoverWalletPubKey(signMessageAsync)
+  // Sign-in already recovered the pubkey from its own signature (the L0 signature merge); the
+  // dedicated prompt is only the fallback when that capture is missing.
+  const walletPubKey =
+    useCryptoStore.getState().walletPubKey ?? (await recoverWalletPubKey(signMessageAsync))
   const portabilityBlob = await encryptBlob(masterSecret, walletPubKey)
 
   await creatorApi.putBlob({

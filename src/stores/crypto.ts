@@ -13,9 +13,14 @@ import type { Address } from 'viem'
 
 type CryptoState = {
   masterSecret: Uint8Array | null
+  // The connected wallet's secp256k1 public key, recovered from the sign-in signature (L0
+  // signature merge) so key provisioning needs no second prompt. Not secret — but session-scoped
+  // like everything here, so it can never go stale across a wallet switch.
+  walletPubKey: Uint8Array | null
   contentKeys: Map<string, Uint8Array>
   setMasterSecret: (secret: Uint8Array) => void
   clearMasterSecret: () => void
+  setWalletPubKey: (pubKey: Uint8Array) => void
   cacheContentKey: (creatorProxy: Address, tierId: number, key: Uint8Array) => void
   cachePublicKey: (fingerprint: string, key: Uint8Array) => void
   getContentKey: (creatorProxy: Address, tierId: number) => Uint8Array | null
@@ -27,9 +32,11 @@ const tierKey = (proxy: Address, tierId: number) => `${proxy}:${tierId}`
 
 export const useCryptoStore = create<CryptoState>((set, get) => ({
   masterSecret: null,
+  walletPubKey: null,
   contentKeys: new Map(),
   setMasterSecret: (masterSecret) => set({ masterSecret }),
   clearMasterSecret: () => set({ masterSecret: null }),
+  setWalletPubKey: (walletPubKey) => set({ walletPubKey }),
   cacheContentKey: (proxy, tierId, key) => {
     const next = new Map(get().contentKeys)
     next.set(tierKey(proxy, tierId), key)
@@ -42,5 +49,5 @@ export const useCryptoStore = create<CryptoState>((set, get) => ({
   },
   getContentKey: (proxy, tierId) => get().contentKeys.get(tierKey(proxy, tierId)) ?? null,
   getPublicKey: (fingerprint) => get().contentKeys.get(fingerprint) ?? null,
-  clearAll: () => set({ masterSecret: null, contentKeys: new Map() }),
+  clearAll: () => set({ masterSecret: null, walletPubKey: null, contentKeys: new Map() }),
 }))

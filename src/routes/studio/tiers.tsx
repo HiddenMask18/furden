@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { formatUnits, parseUnits, type Address } from 'viem'
+import { formatUnits, isAddress, parseUnits, type Address } from 'viem'
 import { useSessionStore } from '@/stores/session'
 import { ETH_SENTINEL } from '@/lib/chain'
 import { readTiers, setTier, formatDuration, type Tier } from '@/lib/tiers'
@@ -92,6 +92,19 @@ function Tiers() {
     setError(null)
   }
 
+  // Resolve the payment token's symbol as it's typed, so the price field always names its unit —
+  // "0.01" alone is ambiguous with real money on the line. Blank = ETH.
+  const tokenInput = tokenAddr.trim()
+  const tokenValid = tokenInput === '' || isAddress(tokenInput)
+  const formToken = (tokenInput || ETH_SENTINEL) as Address
+  const tokenMetaQuery = useQuery({
+    queryKey: ['tokenMeta', formToken],
+    queryFn: () => readTokenMeta(formToken),
+    enabled: tokenValid,
+    retry: false,
+  })
+  const symbol = tokenMetaQuery.data?.symbol
+
   const effectiveId = tierId.trim() === '' ? nextId : Number(tierId)
   const days = Number(durationDays)
   const valid =
@@ -100,7 +113,9 @@ function Tiers() {
     price.trim() !== '' &&
     Number(price) > 0 &&
     Number.isFinite(days) &&
-    days > 0
+    days > 0 &&
+    tokenValid &&
+    !tokenMetaQuery.isError
 
   async function submit() {
     setBusy(true)
@@ -168,7 +183,7 @@ function Tiers() {
           </label>
 
           <label className={styles.field}>
-            <span className={styles.label}>Price</span>
+            <span className={styles.label}>Price{symbol ? ` (${symbol})` : ''}</span>
             <input
               className={styles.input}
               type="text"
@@ -202,6 +217,11 @@ function Tiers() {
               onChange={(e) => setTokenAddr(e.target.value)}
               disabled={busy}
             />
+            {tokenInput !== '' && !tokenValid ? (
+              <span className={styles.error}>Not a valid address.</span>
+            ) : tokenMetaQuery.isError ? (
+              <span className={styles.error}>Couldn’t read a token at this address.</span>
+            ) : null}
           </label>
         </div>
 
@@ -218,7 +238,11 @@ function Tiers() {
             onClick={submit}
             disabled={!valid || busy}
           >
-            {busy ? 'Confirm in your wallet…' : editing ? 'Update tier' : 'Create tier'}
+            {busy
+              ? 'Confirm in your wallet…'
+              : `${editing ? 'Update' : 'Create'} tier${
+                  valid && symbol ? ` — ${price.trim()} ${symbol} / ${days} days` : ''
+                }`}
           </button>
           {(tierId || price || tokenAddr) && !busy && (
             <button type="button" className={styles.ghost} onClick={resetForm}>

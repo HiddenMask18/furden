@@ -12,6 +12,8 @@ import {
   setInstanceUrl,
 } from '@/lib/onboarding'
 import { ApiError } from '@/lib/api'
+import { readHandle } from '@/lib/resolve'
+import { setHandle as setHandleOnChain } from '@/lib/settings'
 import { useSessionStore } from '@/stores/session'
 import { useCryptoStore } from '@/stores/crypto'
 import { env } from '@/lib/env'
@@ -26,8 +28,8 @@ export const Route = createFileRoute('/onboard')({
   component: Onboard,
 })
 
-type Stage = 'connect' | 'register' | 'authenticate' | 'keys' | 'instance' | 'done'
-const ORDER: Stage[] = ['connect', 'register', 'authenticate', 'keys', 'instance', 'done']
+type Stage = 'connect' | 'register' | 'authenticate' | 'keys' | 'instance' | 'handle' | 'done'
+const ORDER: Stage[] = ['connect', 'register', 'authenticate', 'keys', 'instance', 'handle', 'done']
 
 const STEPS: { stage: Stage; title: string; blurb: string }[] = [
   {
@@ -58,6 +60,12 @@ const STEPS: { stage: Stage; title: string; blurb: string }[] = [
     blurb:
       'Record your home instance on-chain so others can resolve your content. Your instance countersigns this.',
   },
+  {
+    stage: 'handle',
+    title: 'Pick a handle (optional)',
+    blurb:
+      'A human-readable name for your profile, recorded on-chain. Entirely optional — without one, your page still works and resolves by your address. Changes are rate-limited, so choose with some care.',
+  },
 ]
 
 function humanize(e: unknown): string {
@@ -79,6 +87,8 @@ function Onboard() {
   const [error, setError] = useState<string | null>(null)
   const [urlWarning, setUrlWarning] = useState<string | null>(null)
   const [skippedUrl, setSkippedUrl] = useState(false)
+  const [handleInput, setHandleInput] = useState('')
+  const [skippedHandle, setSkippedHandle] = useState(false)
 
   // Chain reads live in TanStack Query (§9). Registration gates the early stages; the recorded
   // instance URL gates the final one. Each is enabled only once its inputs exist.
@@ -92,10 +102,18 @@ function Onboard() {
     queryFn: () => readInstanceUrl(session.proxy!),
     enabled: !!session.proxy && !!session.token && session.isCreator,
   })
+  const handleQuery = useQuery({
+    queryKey: ['handle', session.proxy],
+    queryFn: () => readHandle(session.proxy!),
+    enabled: !!session.proxy && !!session.token && session.isCreator,
+  })
 
   const registered = registeredQuery.data
   const urlOnChain = instanceUrlQuery.data
   const urlDone = skippedUrl || (urlOnChain != null && urlOnChain === env.instanceUrl)
+  // handleOf returns "" for handleless — a valid final state, so only a set handle or an explicit
+  // skip completes the step (it cannot be derived from chain state alone).
+  const handleDone = skippedHandle || !!handleQuery.data
 
   let stage: Stage
   if (status !== 'connected') stage = 'connect'
@@ -103,6 +121,7 @@ function Onboard() {
   else if (!session.token) stage = 'authenticate'
   else if (!session.isCreator) stage = 'keys'
   else if (!urlDone) stage = 'instance'
+  else if (!handleDone) stage = 'handle'
   else stage = 'done'
 
   // Onboarding complete — hand off to the studio (its guard now passes: session + isCreator).
@@ -164,6 +183,12 @@ function Onboard() {
       }
     })
 
+  const onSetHandle = () =>
+    run(async () => {
+      await setHandleOnChain(handleInput.trim())
+      await qc.invalidateQueries({ queryKey: ['handle', session.proxy] })
+    })
+
   const currentIndex = ORDER.indexOf(stage)
 
   return (
@@ -171,8 +196,8 @@ function Onboard() {
       <header className={styles.head}>
         <h1 className={styles.title}>Set up your studio</h1>
         <p className={styles.lead}>
-          Five steps to a creator identity you fully own. Two are on-chain transactions; the rest
-          happen in this browser. Your keys never leave in plaintext.
+          Six steps to a creator identity you fully own. Two are on-chain transactions — three if
+          you pick a handle; the rest happen in this browser. Your keys never leave in plaintext.
         </p>
       </header>
 
@@ -254,6 +279,35 @@ function Onboard() {
                           disabled={busy}
                         >
                           Skip for now
+                        </button>
+                      </div>
+                    )}
+
+                    {step.stage === 'handle' && (
+                      <div className={styles.row}>
+                        <input
+                          className={styles.input}
+                          type="text"
+                          placeholder="yourname"
+                          value={handleInput}
+                          onChange={(e) => setHandleInput(e.target.value)}
+                          disabled={busy}
+                        />
+                        <button
+                          type="button"
+                          className={styles.primary}
+                          onClick={onSetHandle}
+                          disabled={busy || handleInput.trim() === ''}
+                        >
+                          {busy ? 'Confirm in your wallet…' : 'Set handle'}
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.skip}
+                          onClick={() => setSkippedHandle(true)}
+                          disabled={busy}
+                        >
+                          Skip — stay handleless
                         </button>
                       </div>
                     )}
