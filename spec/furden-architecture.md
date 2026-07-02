@@ -975,6 +975,34 @@ Also closed in the same pass (Phase C polish):
 - **Session-expiry banner (§5.4).** New `SessionBanner` in the root layout: wallet connected + no session + no sign-in in flight → "Your session ended. [Sign in again →]" after a mid-session 401, or "You're not signed in. [Sign in →]" after a declined sign-in. Session store gained `sessionEnded` (set by `clearSession` only when a token existed; reset on sign-in and deliberate disconnect) and `authPending` (set around `signIn` so the banner never flashes under an open wallet prompt). Suppressed on `/onboard`, whose wizard owns its own auth stages. The word "expired" appears nowhere.
 - **`/settings` built** (was the last real placeholder): read-only wallet / DEN identity / network / instance rows + disconnect, with honest there-is-no-account copy. `/connect` no longer renders the scaffold-stub footnote; `Placeholder` (now only the deliberate v1.x stubs: `/studio/keys`, `/studio/migrate`) dropped its "Not built yet" line — the blurbs carry "Coming in v1.x".
 
+### 4. Live walkthrough #2 findings (2026-07-02) — triaged
+
+The Milestone A walkthrough (fresh loop, creator acct2 "Luna" + subscriber acct3). What it confirmed working: **L0 one-signature onboarding** (the keys step asked for nothing), composer resets cleanly after posting, tier form names its token, the sign-in banner recovered the subscriber's session, feed and subscriptions behaved. What it surfaced, triaged:
+
+**Confirmed bugs (fix next, in this order):**
+
+1. **SubscribeDialog never resets — Extend flow unreachable.** The dialog's `done`/error state survives close; reopening via the Extend button shows the stale "Subscribed … Done" screen instead of the extend flow. Same defect family as the composer stale-done. Fix: reset local state when `open` flips true. *Consequence: the extend path (payment stacking, "Extended" copy, ~60-day date) is still unvalidated.*
+2. **Header nav is stale after an in-place sign-in.** `__root` derives nav links from `Route.useRouteContext()`, which TanStack Router captures at match time — signing in via the banner (no navigation) leaves Feed/Subscriptions/Studio missing until the next navigation. Fix: the nav must read the session store directly (live subscription); route context stays for `beforeLoad` guards only.
+3. **A creator sees a Subscribe button on their own tier.** No viewer==creator check on the profile's tier cards. Fix: hide the action (or label "Your tier") when the session proxy equals the creator proxy.
+4. **A creator's own paywalled posts are invisible on their own profile.** The profile's unlocked-content query is subscription-derived and a creator doesn't subscribe to themselves. At minimum the profile should tell a creator viewing themselves that paywalled posts live in the studio; rendering them inline needs tier keys (finding 5).
+
+**Protocol-level gap, now proven untenable (den-protocol decision needed):**
+
+5. **The master secret is session-of-onboarding-only, and everything creator-side silently degrades without it.** Typing a URL (full page load) wipes it by design; after that the creator loses paywalled previews, paywalled composing, and visibility changes — *permanently*, since v1 has no in-browser recovery path (portability blob needs a private key injected wallets never expose). The documented v1 limitation is now a lived dead end, not an edge case. **Proposal to evaluate:** an authenticated creator-recovery endpoint on the instance (own derived path keys, or the decrypted operational-blob payload). Zero new trust exposure — the instance already holds the operational blob and already derives these keys for subscribers on demand; it would only give the creator what the instance can already compute. Needs PROTOCOL.md + instance work and a deliberate decision (den-spec §4 itself is untouched — this is key *delivery*, not encryption architecture).
+
+**By design — confirmed behaving as specified (record, don't fix):**
+
+- Logged-out viewers see no trace of unwarned paywalled posts (the §2.6-adjacent privacy stance: hidden inventory). *Sub-gap noted: warned-post teaser cards (profile `contentWarnings`) are specified in DESIGN Flow 1 but unimplemented — the profile ignores that field entirely.*
+- Page-load re-auth signature when arriving by typed URL is §5 session initiation, not a bug.
+- The transaction counts the run found painful — 3 txs across onboarding, register+subscribe back-to-back for a fresh subscriber — are precisely the friction Appendix C phases target (L1 folds register into subscribe; L2 removes the grant sig + `publishGrant` tx; L3 collapses prompts). The walkthrough is user-validation of that plan's priority, not new scope.
+
+**Small UX (batch with the bug fixes):**
+
+6. No route from the studio to the creator's own public profile — the run reached `/Luna` only by typed URL (which then cost the master secret, finding 5). Add a "View public profile" link (dashboard header and/or studio rail).
+7. The locked-preview copy "reconnect after onboarding" is misleading — re-onboarding does not restore keys (nothing does, in v1). Honest copy until finding 5 lands: the keys from this session are gone; paywalled tools return next time you onboard-provision — or the recovery endpoint, once it exists.
+
+**Still untested after this run:** the visibility-change re-encryption pipeline (blocked by the key loss before it was attempted — `archiveContent` watch item remains open); the full Phase 8 session-surface pass (run was disturbed by bug 2); extend's on-chain stacking via the UI (blocked by bug 1).
+
 *Keep this section honest: it has claimed emptiness while gaps existed before. An empty Appendix B is a prompt to re-audit, not proof of completeness.*
 
 ---
