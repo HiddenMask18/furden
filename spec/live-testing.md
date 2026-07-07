@@ -59,49 +59,41 @@ Three processes, started in this order. All commands from the repo root (`den/`)
   `sqlite3 den-protocol/instance/den-instance.db "DELETE FROM sessions"`
 - Sessions are DB-backed; instance restarts do *not* end sessions.
 
-## Walkthrough #3 checklist
+## Walkthrough #4 checklist
 
-Everything below is implemented but not yet verified live. Grouped by why it's on the list.
+Walkthrough #3 (2026-07-07) passed its entire fix queue: recovery (silent, one sign-in
+signature), full owner view, visibility pipeline both directions (`archiveContent` behaved),
+extend with correct ~60-day stacking, live header nav after banner sign-in, and the L0/composer
+regressions. Findings are triaged in furden-architecture.md Appendix B §5. What remains and what
+it surfaced:
 
-### Fixed 2026-07-07, needs live confirmation
+### New fixes to confirm (from walkthrough #3 findings)
 
-- [ ] **Extend via UI** — as the subscriber, reopen the dialog on a held tier: it must show the
-  extend flow (not a stale "Subscribed … Done" screen); paying again must stack (expiry moves out
-  ~60 days for two 30-day payments) and the dialog must say "Extended".
-- [ ] **Live header nav** — force a 401, sign back in via the banner *without navigating*:
-  Feed/Subscriptions (and Studio for the creator) must appear in the header immediately.
-- [ ] **Own-tier Subscribe hidden** — as the creator on your own profile: no Subscribe button on
-  your tiers; the owner note ("your public profile as visitors see it") links to the library.
-- [ ] **Studio → profile link** — "View public profile" on the dashboard navigates in-app; the
-  master secret must survive the trip (paywalled previews still work back in the studio).
-- [ ] **Honest locked copy** — with the master key absent, the library copy must not claim
-  anything restores it.
+- [ ] **Subscribe refresh** — after subscribing on a creator profile, the paywalled posts must
+  unlock *without a reload* (Appendix B §5 finding 1: unlocked-content/feed queries not
+  invalidated on subscribe success).
+- [ ] **Sign-in feedback on /connect** — the sign-in action must visibly progress/complete
+  (finding 2: click appeared to do nothing while the wallet connected).
+- [ ] **Banner variant after server-side kill** — with a live session 401'd, the banner must say
+  "Your session ended", not "You're not signed in" (finding 3).
 
-### Carried over from walkthrough #2 (was blocked by the key loss)
+### L2 implicit default grants (Milestone B part 2 — add before running)
 
-- [ ] **Visibility-change pipeline** — make a paywalled post public and a public post paywalled:
-  full re-encryption (new fingerprint, new key), old copy retired. *Watch item: `archiveContent`
-  behavior on the old row.*
-- [ ] **Clean Phase 8 pass** — the full session-surface sequence (mid-session 401 → banner →
-  recover → continue working) without the run being disturbed by other bugs.
+- [ ] **First paywalled post per tier = 1 transaction** — no grant signature, no `publishGrant`
+  prompt for the default `tier:N` path.
+- [ ] **Key delivery still works** for a tier that never published an explicit grant.
+- [ ] **Explicit grants still honored** (cumulative/hierarchical paths unchanged).
 
-### Recovery endpoint (implemented 2026-07-07, needs live confirmation)
+### Friction counts to re-measure (baseline from #3, Appendix B §5 finding 4)
 
-- [ ] **Master-secret recovery** — as the creator, reload the page mid-session (the walkthrough
-  #2 killer), sign back in: the master secret must come back and paywalled preview, paywalled
-  compose, and visibility changes must all re-arm. Also verify the recovery is silent (no extra
-  prompt beyond the sign-in signature).
-- [ ] **Full owner view** — the creator's own paywalled posts render unlocked on their own
-  profile (including unwarned ones, which visitors never see), with the "your profile, unlocked"
-  owner note. With recovery failed/absent, the note flips to "sign in again to restore".
-- [ ] **Subscriber unaffected** — the subscriber wallet (not a creator) must see no recovery
-  call and no behavior change at sign-in.
+Creator onboarding 2 sig + 3 tx · every post 1 tx · first paywalled post per tier +1 sig +1 tx ·
+visibility change 2 tx · fresh subscribe 2 tx. Re-count after each L-phase lands; the goal line
+is L3's one-signature-per-intent.
 
-### Regression spot-checks (passed in #2, cheap to re-confirm)
+### Regression spot-checks (cheap)
 
-- [ ] L0 one-signature onboarding (the keys step asks for nothing).
-- [ ] Composer resets after posting; tier form names its token.
-- [ ] Feed and subscriptions pages assemble correctly for the subscriber.
+- [ ] Recovery after reload (one signature, library re-armed); owner view unlocked.
+- [ ] Extend stacking; visibility pipeline; banner sign-in updates nav live.
 
 ## After the run
 

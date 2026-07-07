@@ -1008,6 +1008,19 @@ The Milestone A walkthrough (fresh loop, creator acct2 "Luna" + subscriber acct3
 
 **Still untested after this run:** the visibility-change re-encryption pipeline (blocked by the key loss before it was attempted — `archiveContent` watch item remains open); the full Phase 8 session-surface pass (run was disturbed by bug 2); extend's on-chain stacking via the UI (blocked by bug 1). *The forward-looking checklist for these — plus loop setup and the walkthrough procedure — now lives in [live-testing.md](./live-testing.md); this appendix records findings, that file drives the runs.*
 
+### 5. Live walkthrough #3 findings (2026-07-07) — triaged
+
+The Milestone B part 1 walkthrough (fresh loop, creator acct2 "Luna" + subscriber acct3). **Everything in the fix queue passed live:** master-secret recovery (silent — reload cost exactly one sign-in signature, library/compose/visibility all re-armed), full owner view (no Subscribe on own tier, owner note, own paywalled post rendered, survives both the in-app link and a typed-URL reload), the visibility-change pipeline both directions (first time ever reached; `archiveContent` behaved), extend via the reopened dialog with correct stacking, and the header nav updating live after a banner sign-in. L0 onboarding and composer-reset regressions held.
+
+**New findings:**
+
+1. **(bug) Subscribe success doesn't refresh the profile.** After subscribing, the paywalled posts stayed locked until a hard reload. Diagnosis: `SubscribeDialog` invalidates the `['subscription', …]` status query but nothing invalidates `['creatorUnlocked', …]` (or the feed queries) on success. Fix: invalidate the unlocked-content and feed queries on subscribe/extend success.
+2. **(UX, needs repro) Sign-in action gave no visible completion** for the subscriber in phase 6 — the click seemed to do nothing while the wallet did connect. Likely a feedback gap on `/connect` (button state during the connect→challenge→sign sequence). Diagnose before fixing.
+3. **(check) Banner variant after a server-side session kill read "You're not signed in"** where "Your session ended" was expected (§5.4 distinguishes the two), observed on both wallets. Investigate the `sessionEnded` path — possibly the /feed guard redirect swallows the 401 before `clearSession` runs with a token present.
+4. **(the run's headline) Friction counts, confirmed live** — the user-facing prompt bill as measured: creator onboarding 2 signatures + 3 transactions; every post 1 transaction; first paywalled post per tier 2 transactions + 1 signature (grant publish); visibility change 2 transactions; fresh-subscriber subscribe 2 transactions. Verdict from the run: *"users don't care about the technicality — it just looks wrong and feels wrong"; posting and visibility especially are actions users assume are free.* This is user-validation of den-spec Appendix C, not new scope — the mapping: **L2** (implicit default grants) removes the grant signature + transaction; **L1** (CREATE2 lazy deploy) folds register into subscribe — the double pop-up dies; **L3** (AA + paymaster) removes the gas-token prerequisite and collapses each intent to one signature — the "feels free" answer; **L4** (batched/Merkle registration) amortizes the per-post transaction. One client-side option needs no protocol change: **defer `archiveContent`** (retire old copies lazily, batched) so a visibility change becomes one transaction immediately — decision open below.
+
+**Decisions for next round:** (a) proceed with L2 as planned (already committed as Milestone B part 2); (b) defer-archiveContent client policy — yes/no (old-copy retirement becomes lazy bookkeeping; the instance row is already deleted synchronously either way); (c) whether the run's evidence changes the L1/L3 ordering or timeline.
+
 *Keep this section honest: it has claimed emptiness while gaps existed before. An empty Appendix B is a prompt to re-audit, not proof of completeness.*
 
 ---
