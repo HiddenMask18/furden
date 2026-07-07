@@ -85,13 +85,17 @@ Everything below is implemented but not yet verified live. Grouped by why it's o
 - [ ] **Clean Phase 8 pass** — the full session-surface sequence (mid-session 401 → banner →
   recover → continue working) without the run being disturbed by other bugs.
 
-### Blocked on the recovery endpoint (Milestone B part 1 — add before running)
+### Recovery endpoint (implemented 2026-07-07, needs live confirmation)
 
 - [ ] **Master-secret recovery** — as the creator, reload the page mid-session (the walkthrough
   #2 killer), sign back in: the master secret must come back and paywalled preview, paywalled
-  compose, and visibility changes must all re-arm.
+  compose, and visibility changes must all re-arm. Also verify the recovery is silent (no extra
+  prompt beyond the sign-in signature).
 - [ ] **Full owner view** — the creator's own paywalled posts render unlocked on their own
-  profile.
+  profile (including unwarned ones, which visitors never see), with the "your profile, unlocked"
+  owner note. With recovery failed/absent, the note flips to "sign in again to restore".
+- [ ] **Subscriber unaffected** — the subscriber wallet (not a creator) must see no recovery
+  call and no behavior change at sign-in.
 
 ### Regression spot-checks (passed in #2, cheap to re-confirm)
 

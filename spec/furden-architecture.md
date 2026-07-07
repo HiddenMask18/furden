@@ -396,6 +396,7 @@ wagmi's `useAccount` resolves immediately from its persisted connection state (w
 - On signature: `POST /auth/verify { wallet, nonce, signature }`
 - On success: call `setSession(token, proxy, walletAddress)` on `useSessionStore`
 - Fire `GET /creator/blob` to set `isCreator` (operational blob exists on this instance — see Section 4)
+- If `isCreator` and no master secret is in memory: `GET /creator/master-secret` → `setMasterSecret` (key recovery — contract and trust analysis in PROTOCOL.md "Master secret session recovery"). Non-fatal: on failure the creator session degrades to locked previews and the user retries by signing in again.
 - UI resolves to authenticated state
 
 This sequence runs in a root-level component effect on first mount. It is not blocking — public routes render immediately; authenticated routes show a loading state until the session resolves.
@@ -991,6 +992,8 @@ The Milestone A walkthrough (fresh loop, creator acct2 "Luna" + subscriber acct3
 5. **The master secret is session-of-onboarding-only, and everything creator-side silently degrades without it.** Typing a URL (full page load) wipes it by design; after that the creator loses paywalled previews, paywalled composing, and visibility changes — *permanently*, since v1 has no in-browser recovery path (portability blob needs a private key injected wallets never expose). The documented v1 limitation is now a lived dead end, not an edge case. **Proposal to evaluate:** an authenticated creator-recovery endpoint on the instance (own derived path keys, or the decrypted operational-blob payload). Zero new trust exposure — the instance already holds the operational blob and already derives these keys for subscribers on demand; it would only give the creator what the instance can already compute. Needs PROTOCOL.md + instance work and a deliberate decision (den-spec §4 itself is untouched — this is key *delivery*, not encryption architecture).
 
    **DECIDED 2026-07-07:** yes, **master-secret form** — one authenticated endpoint returns the decrypted operational payload to the session-authenticated creator; the client re-derives everything locally. **Priority: before L2** (data-loss correctness outranks friction optimization; Milestone B = recovery endpoint → L2, in that order). Creator-viewing-own-profile gets the **full owner view** (own paywalled posts unlocked inline, built on recovery). Scope: PROTOCOL.md + instance endpoint + furden recovery call on sign-in.
+
+   **IMPLEMENTED 2026-07-07** (compiler-verified, live test pending — see live-testing.md): instance `GET /creator/master-secret` (mirrors the access-route decrypt, zeroes plaintext after hex-encoding; documented in instance README); PROTOCOL.md "Master secret session recovery" section with trust analysis + client obligations; furden recovers on sign-in when `isCreator` and no secret is in memory (non-fatal on failure); **full owner view shipped** — own profile lists `GET /creator/content` (includes unwarned paywalled posts) and derives tier keys locally from the recovered secret, closing bug 4 completely; content-library copy now says "sign in again to restore".
 
 **By design — confirmed behaving as specified (record, don't fix):**
 

@@ -86,7 +86,7 @@ function LibraryRow({
           className={styles.manage}
           onClick={() => onManage(item)}
           disabled={!canManage}
-          title={canManage ? undefined : 'Your master key isn’t in this session, so visibility can’t be changed.'}
+          title={canManage ? undefined : 'Your master key isn’t in this session — sign in again to restore it.'}
         >
           {item.isPublic ? 'Make paywalled' : 'Make public'}
         </button>
@@ -102,7 +102,7 @@ function LibraryRow({
         lockedMessage={
           item.isPublic
             ? 'This post is public but its key could not be loaded.'
-            : "Your master key isn't in this session, so this preview stays locked."
+            : "Your master key isn't in this session — sign in again to restore it and unlock previews."
         }
       />
     </li>
@@ -134,9 +134,8 @@ function ContentLibrary() {
         {!masterSecret && (
           <p className={styles.sessionNote}>
             Your master key isn&rsquo;t in this session, so visibility changes and paywalled previews
-            are unavailable. It lives only in the browser session where you onboarded — reloading
-            the page loses it, and there is no way to restore it yet. Your published posts and
-            subscribers are unaffected.
+            are unavailable. Signing in restores it from your instance — reconnect your wallet or
+            use the sign-in banner. Your published posts and subscribers are unaffected either way.
           </p>
         )}
       </header>

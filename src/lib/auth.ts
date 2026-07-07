@@ -4,7 +4,7 @@
  */
 import { hashMessage, recoverAddress, type Address } from 'viem'
 import { auth as authApi, creator as creatorApi, ApiError } from './api'
-import { pubKeyFromSignature } from './crypto'
+import { keyFromHex, pubKeyFromSignature } from './crypto'
 import { useSessionStore } from '@/stores/session'
 import { useCryptoStore } from '@/stores/crypto'
 
@@ -51,12 +51,32 @@ async function runSignIn(
   }
 
   // isCreator = operational blob exists on the configured instance (§4). Best-effort.
+  let isCreator = false
   try {
     const { exists } = await creatorApi.blobExists()
+    isCreator = exists
     useSessionStore.getState().setIsCreator(exists)
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) return false
     useSessionStore.getState().setIsCreator(false)
+  }
+
+  // Key recovery (§5 sign-in sequence): the master secret is memory-only, so any page load loses
+  // it. A
+  // creator signing in on a fresh session gets it back from the instance — which can already
+  // compute it (it decrypts the operational blob on every subscriber key request), so this
+  // reveals nothing new to anyone. Non-fatal: on failure the studio degrades to locked
+  // previews exactly as before recovery existed.
+  if (isCreator && !useCryptoStore.getState().masterSecret) {
+    try {
+      const { masterSecret } = await creatorApi.masterSecret()
+      const bytes = keyFromHex(masterSecret)
+      if (bytes.length === 32) {
+        useCryptoStore.getState().setMasterSecret(bytes)
+      }
+    } catch {
+      // degraded creator session — recovery can be retried by signing in again
+    }
   }
   return true
 }

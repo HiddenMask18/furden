@@ -2,12 +2,13 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { formatUnits } from 'viem'
 import { resolveHandle } from '@/lib/resolve'
-import { profile as profileApi, type TierDef } from '@/lib/api'
-import { keyFromHex } from '@/lib/crypto'
+import { creator as creatorApi, profile as profileApi, type TierDef } from '@/lib/api'
+import { deriveKey, keyFromHex, tierPath } from '@/lib/crypto'
 import { readTokenMeta } from '@/lib/token'
 import { formatDuration } from '@/lib/tiers'
 import { enumerateSubscriptions, loadTierContent } from '@/lib/feed'
 import { useSessionStore } from '@/stores/session'
+import { useCryptoStore } from '@/stores/crypto'
 import { PostCard } from '@/components/PostCard'
 import { SubscribeButton } from '@/components/SubscribeButton'
 import type { Address } from 'viem'
@@ -70,8 +71,9 @@ function CreatorProfile() {
 
   // The signed-in viewer is this creator. Subscription-derived unlocking is meaningless for them
   // (no subscription to self), and Subscribe on their own tiers would be a valid-but-absurd
-  // transaction. Full owner view (own paywalled posts unlocked inline) lands with key recovery.
+  // transaction. Owner view instead: own inventory + locally-derived tier keys (below).
   const own = !!sessionProxy && !!proxy && sessionProxy.toLowerCase() === proxy.toLowerCase()
+  const masterSecret = useCryptoStore((s) => s.masterSecret)
 
   // The viewer's unlocked posts from this creator: held tiers (one creator-narrowed getLogs +
   // live expiry) → per-tier inventory + key. Only runs with a session; failure degrades to the
@@ -87,6 +89,30 @@ function CreatorProfile() {
     },
     enabled: !!proxy && !!sessionProxy && !!token && !own,
   })
+
+  // Owner view: the creator's own paywalled posts, unlocked without any subscription. Inventory
+  // from GET /creator/content (which, unlike the public profile, lists unwarned paywalled posts);
+  // keys derived locally from the in-session master secret — tier posts are encrypted under
+  // deriveKey(masterSecret, "tier:<id>") by construction. Public posts (tierId 0) are excluded
+  // here; they arrive with their per-post keys via the profile like for any visitor.
+  const ownQuery = useQuery({
+    queryKey: ['creatorOwnPosts', proxy],
+    queryFn: async () => {
+      const items = await creatorApi.listContent()
+      const secret = useCryptoStore.getState().masterSecret!
+      return items
+        .filter((i) => i.tierId !== '0')
+        .map((i) => ({
+          fingerprint: i.fingerprint,
+          key: deriveKey(secret, tierPath(i.tierId)),
+          timestamp: i.timestamp,
+          warnings: i.warnings,
+        }))
+    },
+    enabled: own && !!token && !!masterSecret,
+  })
+
+  const viewerUnlocked = own ? ownQuery.data : unlockedQuery.data
 
   if (resolveQuery.isPending) {
     return <p className={styles.muted}>Resolving…</p>
@@ -124,7 +150,7 @@ function CreatorProfile() {
       warnings: c.warnings,
       authed: false,
     })),
-    ...(unlockedQuery.data ?? []).map((i) => ({
+    ...(viewerUnlocked ?? []).map((i) => ({
       fingerprint: i.fingerprint,
       key: i.key,
       timestamp: i.timestamp,
@@ -145,7 +171,9 @@ function CreatorProfile() {
         {p.bio && <p className={styles.bio}>{p.bio}</p>}
         {own && (
           <p className={styles.ownerNote}>
-            This is your public profile as visitors see it — paywalled posts show locked here.{' '}
+            {masterSecret
+              ? 'This is your profile with your paywalled posts unlocked — visitors only see the public ones.'
+              : 'This is your profile. Your master key isn’t in this session, so your paywalled posts stay hidden here — sign in again to restore it.'}{' '}
             <Link to="/studio/content" className={styles.ownerLink}>
               Manage them in your library →
             </Link>
@@ -162,9 +190,11 @@ function CreatorProfile() {
       )}
 
       <div className={styles.posts}>
-        {unlockedQuery.isError && (
+        {(own ? ownQuery.isError : unlockedQuery.isError) && (
           <p className={styles.muted}>
-            Your subscriber content couldn’t be loaded right now — showing the public view.
+            {own
+              ? 'Your paywalled posts couldn’t be loaded right now — showing the public view.'
+              : 'Your subscriber content couldn’t be loaded right now — showing the public view.'}
           </p>
         )}
         {posts.length === 0 ? (

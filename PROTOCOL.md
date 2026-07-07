@@ -256,7 +256,7 @@ const portabilityBlob = await encryptBlob(masterSecret, walletPubKey);
 const emergencyPortabilityBlob = await encryptBlob(masterSecret, emergencyWalletPubKey);
 ```
 
-> **Recovery-side limitation (v1.x).** The portability blob can be *written* with only a signature (above), but *reading* it back — decrypting to recover the master secret during migration — requires the wallet's private key for the reverse ECDH, which an injected wallet never exposes. In-browser recovery is therefore not achievable with a standard injected wallet in v1: it needs a wallet that can export its key, or an out-of-band key import. Migration UI is v1.x (DESIGN.md), so this is deferred — but onboarding copy must not promise a one-click in-app recovery it cannot yet deliver. Tracked in `furden-architecture.md` Appendix B.
+> **Portability-blob limitation (v1.x).** The portability blob can be *written* with only a signature (above), but *reading* it back — decrypting during migration — requires the wallet's private key for the reverse ECDH, which an injected wallet never exposes. Decrypting it in-browser therefore needs a wallet that can export its key, or an out-of-band key import; migration UI is v1.x (DESIGN.md). For everyday session restore this no longer matters: the client recovers the master secret from its **current** instance via `GET /creator/master-secret` (see "Master secret session recovery" below). The portability blob remains the instance-independent escape hatch — it is what makes leaving a dead or hostile instance possible.
 
 **6. Upload blobs [instance]**
 ```
@@ -297,6 +297,27 @@ DENIdentityImpl.updateInstanceURL(url, receivingInstanceProxy, instanceSig)
 ```
 
 Called from the creator's proxy's registered wallet (the proxy address is the contract address). The signature covers `keccak256(abi.encode("DEN-url-confirm", creatorProxy, url, urlUpdateNonce))` as an EIP-191 personal message and commits to the proxy's current `urlUpdateNonce`, so it is valid for exactly one call — re-fetch if the transaction is not sent promptly after another URL update. Required for client-side routing — compliant clients resolve creator identity via the on-chain instance URL record.
+
+---
+
+## Master secret session recovery
+
+The master secret is memory-only client-side — any full page load loses it, and the portability blob cannot restore it in-browser (see the callout above). The instance fills this gap: an authenticated creator can retrieve their own decrypted operational payload.
+
+```
+GET /creator/master-secret
+→ { masterSecret: "0x<64 hex>" }   (32 bytes)
+```
+
+404 if no operational blob is stored for the session's proxy (the wallet is not a creator on this instance, or setup is incomplete).
+
+**Trust analysis.** This endpoint adds zero new exposure. The instance already derives the per-creator blob key and decrypts this exact blob on every subscriber key request (`POST /access/key`) — the plaintext master secret transits the instance process routinely today. Wire delivery as hex over the authenticated TLS channel is the same class as key delivery returning derived content keys to subscribers. The only change is *who may ask*: the creator, for their own secret, on a session bound to a registry-authorized wallet (`/auth/verify` resolves wallet → proxy on-chain). It does not weaken the E2EE stance either — that stance is subscriber-facing (the *hoster* cannot read content without the instance master key); creators have always trusted their chosen instance with operational key derivation.
+
+**Client obligations:**
+
+- Call it only when needed: after a successful sign-in, when `isCreator` is true and no master secret is in memory. Never poll.
+- Treat the response like the master secret it is: memory only, never persisted, wiped on disconnect/unload — identical discipline to a freshly generated secret.
+- Recovery failure is non-fatal: degrade to the locked-preview creator experience and let the user retry by signing in again.
 
 ---
 

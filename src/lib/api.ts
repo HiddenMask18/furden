@@ -138,6 +138,10 @@ export const access = {
 export const creator = {
   blobPubkey: () => request<{ pubKey: string }>(`/creator/blob-pubkey`, { auth: true }),
   blobExists: () => request<{ exists: boolean }>(`/creator/blob`, { auth: true }),
+  // Key recovery: the decrypted operational payload (32-byte master secret, 0x-hex) for the
+  // session's own proxy. 404 until blobs are uploaded. Same trust class as subscriber key
+  // delivery — the instance already decrypts this blob on every POST /access/key.
+  masterSecret: () => request<{ masterSecret: string }>(`/creator/master-secret`, { auth: true }),
   putBlob: (body: { operationalBlob: string; portabilityBlob: string; emergencyPortabilityBlob?: string }) =>
     request<{ stored: boolean }>(`/creator/blob`, { method: 'PUT', auth: true, body }),
   setProfile: (bio: string | null) =>
