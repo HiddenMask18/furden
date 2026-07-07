@@ -125,6 +125,17 @@ function Dashboard() {
         <Link to="/studio/tiers" className={styles.secondaryAction}>
           Manage tiers
         </Link>
+        {/* In-app navigation keeps the SPA session alive — typing the profile URL into the
+            address bar reloads the app and wipes the memory-only master secret. */}
+        {proxy && (
+          <Link
+            to="/$handle"
+            params={{ handle: handle || proxy }}
+            className={styles.secondaryAction}
+          >
+            View public profile
+          </Link>
+        )}
       </div>
 
       <section className={styles.recent}>

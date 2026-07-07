@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useAccount } from 'wagmi'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -44,6 +44,15 @@ export function SubscribeDialog({ open, onOpenChange, creatorProxy, tier, onSubs
   // Snapshot which action completed — after success the subscription query refetches as active,
   // so deriving the done copy from `extending` would mislabel a first subscribe as an extension.
   const [done, setDone] = useState<null | 'subscribed' | 'extended'>(null)
+
+  // The dialog stays mounted between opens (the trigger owns `open`), so a finished run's
+  // done/error state would otherwise greet the next open and make Extend unreachable.
+  useEffect(() => {
+    if (open) {
+      setDone(null)
+      setError(null)
+    }
+  }, [open])
 
   const metaQuery = useQuery({
     queryKey: ['tokenMeta', token],

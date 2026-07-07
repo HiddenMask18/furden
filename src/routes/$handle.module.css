@@ -36,6 +36,20 @@
   line-height: var(--leading-relaxed);
 }
 
+.ownerNote {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.ownerLink {
+  color: var(--color-accent);
+}
+
 .tiers {
   display: flex;
   flex-wrap: wrap;

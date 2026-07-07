@@ -981,25 +981,27 @@ The Milestone A walkthrough (fresh loop, creator acct2 "Luna" + subscriber acct3
 
 **Confirmed bugs (fix next, in this order):**
 
-1. **SubscribeDialog never resets — Extend flow unreachable.** The dialog's `done`/error state survives close; reopening via the Extend button shows the stale "Subscribed … Done" screen instead of the extend flow. Same defect family as the composer stale-done. Fix: reset local state when `open` flips true. *Consequence: the extend path (payment stacking, "Extended" copy, ~60-day date) is still unvalidated.*
-2. **Header nav is stale after an in-place sign-in.** `__root` derives nav links from `Route.useRouteContext()`, which TanStack Router captures at match time — signing in via the banner (no navigation) leaves Feed/Subscriptions/Studio missing until the next navigation. Fix: the nav must read the session store directly (live subscription); route context stays for `beforeLoad` guards only.
-3. **A creator sees a Subscribe button on their own tier.** No viewer==creator check on the profile's tier cards. Fix: hide the action (or label "Your tier") when the session proxy equals the creator proxy.
-4. **A creator's own paywalled posts are invisible on their own profile.** The profile's unlocked-content query is subscription-derived and a creator doesn't subscribe to themselves. At minimum the profile should tell a creator viewing themselves that paywalled posts live in the studio; rendering them inline needs tier keys (finding 5).
+1. ~~**SubscribeDialog never resets — Extend flow unreachable.**~~ **DONE 2026-07-07.** The dialog's `done`/error state survived close; reopening via the Extend button showed the stale "Subscribed … Done" screen. Fixed: local state resets when `open` flips true. *Extend path (payment stacking, "Extended" copy, ~60-day date) still needs its live re-test.*
+2. ~~**Header nav is stale after an in-place sign-in.**~~ **DONE 2026-07-07.** `__root`'s nav now reads `useSessionStore` directly (live subscription); `Route.useRouteContext()` — captured at match time, hence the staleness — remains for `beforeLoad` guards only.
+3. ~~**A creator sees a Subscribe button on their own tier.**~~ **DONE 2026-07-07.** The profile derives `own` (session proxy == creator proxy, case-insensitive); own tiers render without the Subscribe action, and the subscription-derived unlocked query is skipped for self.
+4. **A creator's own paywalled posts are invisible on their own profile.** The profile's unlocked-content query is subscription-derived and a creator doesn't subscribe to themselves. *Interim shipped 2026-07-07:* an owner note on the profile header ("your public profile as visitors see it") linking to the content library. *Full fix decided (see finding 5): owner view renders own paywalled posts unlocked — lands with key recovery, which supplies the tier keys.*
 
 **Protocol-level gap, now proven untenable (den-protocol decision needed):**
 
 5. **The master secret is session-of-onboarding-only, and everything creator-side silently degrades without it.** Typing a URL (full page load) wipes it by design; after that the creator loses paywalled previews, paywalled composing, and visibility changes — *permanently*, since v1 has no in-browser recovery path (portability blob needs a private key injected wallets never expose). The documented v1 limitation is now a lived dead end, not an edge case. **Proposal to evaluate:** an authenticated creator-recovery endpoint on the instance (own derived path keys, or the decrypted operational-blob payload). Zero new trust exposure — the instance already holds the operational blob and already derives these keys for subscribers on demand; it would only give the creator what the instance can already compute. Needs PROTOCOL.md + instance work and a deliberate decision (den-spec §4 itself is untouched — this is key *delivery*, not encryption architecture).
 
+   **DECIDED 2026-07-07:** yes, **master-secret form** — one authenticated endpoint returns the decrypted operational payload to the session-authenticated creator; the client re-derives everything locally. **Priority: before L2** (data-loss correctness outranks friction optimization; Milestone B = recovery endpoint → L2, in that order). Creator-viewing-own-profile gets the **full owner view** (own paywalled posts unlocked inline, built on recovery). Scope: PROTOCOL.md + instance endpoint + furden recovery call on sign-in.
+
 **By design — confirmed behaving as specified (record, don't fix):**
 
-- Logged-out viewers see no trace of unwarned paywalled posts (the §2.6-adjacent privacy stance: hidden inventory). *Sub-gap noted: warned-post teaser cards (profile `contentWarnings`) are specified in DESIGN Flow 1 but unimplemented — the profile ignores that field entirely.*
+- Logged-out viewers see no trace of unwarned paywalled posts (the §2.6-adjacent privacy stance: hidden inventory). *Sub-gap noted: warned-post teaser cards (profile `contentWarnings`) are specified in DESIGN Flow 1 but unimplemented — the profile ignores that field entirely. **DECIDED 2026-07-07: deferred to v1.x** — UX polish, not correctness; stays behind recovery + L2 in the queue.*
 - Page-load re-auth signature when arriving by typed URL is §5 session initiation, not a bug.
 - The transaction counts the run found painful — 3 txs across onboarding, register+subscribe back-to-back for a fresh subscriber — are precisely the friction Appendix C phases target (L1 folds register into subscribe; L2 removes the grant sig + `publishGrant` tx; L3 collapses prompts). The walkthrough is user-validation of that plan's priority, not new scope.
 
 **Small UX (batch with the bug fixes):**
 
-6. No route from the studio to the creator's own public profile — the run reached `/Luna` only by typed URL (which then cost the master secret, finding 5). Add a "View public profile" link (dashboard header and/or studio rail).
-7. The locked-preview copy "reconnect after onboarding" is misleading — re-onboarding does not restore keys (nothing does, in v1). Honest copy until finding 5 lands: the keys from this session are gone; paywalled tools return next time you onboard-provision — or the recovery endpoint, once it exists.
+6. ~~No route from the studio to the creator's own public profile~~ **DONE 2026-07-07** — "View public profile" link on the dashboard actions row (in-app navigation, so the SPA session and master secret survive the trip).
+7. ~~The locked-preview copy "reconnect after onboarding" is misleading~~ **DONE 2026-07-07** — copy no longer claims anything restores the key; it states the session-only reality plainly and notes published posts/subscribers are unaffected.
 
 **Still untested after this run:** the visibility-change re-encryption pipeline (blocked by the key loss before it was attempted — `archiveContent` watch item remains open); the full Phase 8 session-surface pass (run was disturbed by bug 2); extend's on-chain stacking via the UI (blocked by bug 1).
 

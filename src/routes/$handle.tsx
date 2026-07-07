@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { formatUnits } from 'viem'
 import { resolveHandle } from '@/lib/resolve'
@@ -26,7 +26,15 @@ function short(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`
 }
 
-function TierCard({ tier, creatorProxy }: { tier: TierDef; creatorProxy: Address }) {
+function TierCard({
+  tier,
+  creatorProxy,
+  own,
+}: {
+  tier: TierDef
+  creatorProxy: Address
+  own: boolean
+}) {
   const { data: meta } = useQuery({
     queryKey: ['tokenMeta', tier.token],
     queryFn: () => readTokenMeta(tier.token),
@@ -38,7 +46,7 @@ function TierCard({ tier, creatorProxy }: { tier: TierDef; creatorProxy: Address
         {meta ? `${formatUnits(BigInt(tier.price), meta.decimals)} ${meta.symbol}` : '…'}
       </span>
       <span className={styles.tierCardMeta}>every {formatDuration(BigInt(tier.duration))}</span>
-      <SubscribeButton creatorProxy={creatorProxy} tier={tier} />
+      {!own && <SubscribeButton creatorProxy={creatorProxy} tier={tier} />}
     </div>
   )
 }
@@ -60,6 +68,11 @@ function CreatorProfile() {
     enabled: !!proxy,
   })
 
+  // The signed-in viewer is this creator. Subscription-derived unlocking is meaningless for them
+  // (no subscription to self), and Subscribe on their own tiers would be a valid-but-absurd
+  // transaction. Full owner view (own paywalled posts unlocked inline) lands with key recovery.
+  const own = !!sessionProxy && !!proxy && sessionProxy.toLowerCase() === proxy.toLowerCase()
+
   // The viewer's unlocked posts from this creator: held tiers (one creator-narrowed getLogs +
   // live expiry) → per-tier inventory + key. Only runs with a session; failure degrades to the
   // public view rather than breaking the page.
@@ -72,7 +85,7 @@ function CreatorProfile() {
       const groups = await Promise.all(held.map((s) => loadTierContent(proxy!, s.tierId)))
       return groups.flat()
     },
-    enabled: !!proxy && !!sessionProxy && !!token,
+    enabled: !!proxy && !!sessionProxy && !!token && !own,
   })
 
   if (resolveQuery.isPending) {
@@ -130,12 +143,20 @@ function CreatorProfile() {
         <h1 className={styles.name}>{p.handle || short(p.proxy)}</h1>
         <p className={styles.proxy}>{short(p.proxy)}</p>
         {p.bio && <p className={styles.bio}>{p.bio}</p>}
+        {own && (
+          <p className={styles.ownerNote}>
+            This is your public profile as visitors see it — paywalled posts show locked here.{' '}
+            <Link to="/studio/content" className={styles.ownerLink}>
+              Manage them in your library →
+            </Link>
+          </p>
+        )}
       </header>
 
       {p.tiers.length > 0 && (
         <div className={styles.tiers}>
           {p.tiers.map((t) => (
-            <TierCard key={t.tierId} tier={t} creatorProxy={p.proxy} />
+            <TierCard key={t.tierId} tier={t} creatorProxy={p.proxy} own={own} />
           ))}
         </div>
       )}

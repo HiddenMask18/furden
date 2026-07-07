@@ -1,5 +1,6 @@
 import { createRootRouteWithContext, Link, Outlet, useRouterState } from '@tanstack/react-router'
 import type { RouterContext } from '@/lib/router-context'
+import { useSessionStore } from '@/stores/session'
 import { ChainIndicator } from '@/components/ChainIndicator'
 import { SessionBanner } from '@/components/SessionBanner'
 import { WalletBadge } from '@/components/WalletBadge'
@@ -10,7 +11,11 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 })
 
 function RootLayout() {
-  const { session } = Route.useRouteContext()
+  // Read the store directly, not Route.useRouteContext() — router context is captured at match
+  // time, so an in-place sign-in (the §5.4 banner) would leave the nav stale until the next
+  // navigation. The context copy remains for beforeLoad guards, which only run on navigation.
+  const token = useSessionStore((s) => s.token)
+  const isCreator = useSessionStore((s) => s.isCreator)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   // The studio renders its own side-rail chrome; hide the top bar nav links there.
   const inStudio = pathname.startsWith('/studio')
@@ -29,7 +34,7 @@ function RootLayout() {
             <Link to="/about" className={styles.link}>
               About
             </Link>
-            {session.token && (
+            {token && (
               <>
                 <Link to="/feed" className={styles.link}>
                   Feed
@@ -39,7 +44,7 @@ function RootLayout() {
                 </Link>
               </>
             )}
-            {session.isCreator && (
+            {isCreator && (
               <Link to="/studio" className={styles.link}>
                 Studio
               </Link>
