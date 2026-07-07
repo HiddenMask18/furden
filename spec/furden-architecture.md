@@ -1003,7 +1003,7 @@ The Milestone A walkthrough (fresh loop, creator acct2 "Luna" + subscriber acct3
 6. ~~No route from the studio to the creator's own public profile~~ **DONE 2026-07-07** — "View public profile" link on the dashboard actions row (in-app navigation, so the SPA session and master secret survive the trip).
 7. ~~The locked-preview copy "reconnect after onboarding" is misleading~~ **DONE 2026-07-07** — copy no longer claims anything restores the key; it states the session-only reality plainly and notes published posts/subscribers are unaffected.
 
-**Still untested after this run:** the visibility-change re-encryption pipeline (blocked by the key loss before it was attempted — `archiveContent` watch item remains open); the full Phase 8 session-surface pass (run was disturbed by bug 2); extend's on-chain stacking via the UI (blocked by bug 1).
+**Still untested after this run:** the visibility-change re-encryption pipeline (blocked by the key loss before it was attempted — `archiveContent` watch item remains open); the full Phase 8 session-surface pass (run was disturbed by bug 2); extend's on-chain stacking via the UI (blocked by bug 1). *The forward-looking checklist for these — plus loop setup and the walkthrough procedure — now lives in [live-testing.md](./live-testing.md); this appendix records findings, that file drives the runs.*
 
 *Keep this section honest: it has claimed emptiness while gaps existed before. An empty Appendix B is a prompt to re-audit, not proof of completeness.*
 
